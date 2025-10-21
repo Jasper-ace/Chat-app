@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "151818032865",
+    "firebase_url": "https://fixo-chat-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "fixo-chat",
+    "storage_bucket": "fixo-chat.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:151818032865:android:dbdf567bf5151420ca49a0",
+        "android_client_info": {
+          "package_name": "com.example.fixo_chat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyByg7c1t4VBp9n4rQGeIKelqaMpdDSJKRA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

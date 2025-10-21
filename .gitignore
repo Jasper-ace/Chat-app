@@ -1,0 +1,51 @@
+# Laravel
+laravel_admin_api/vendor/
+laravel_admin_api/node_modules/
+laravel_admin_api/public/hot
+laravel_admin_api/public/storage
+laravel_admin_api/storage/*.key
+laravel_admin_api/storage/logs/
+laravel_admin_api/.env
+laravel_admin_api/.env.backup
+laravel_admin_api/.phpunit.result.cache
+laravel_admin_api/Homestead.json
+laravel_admin_api/Homestead.yaml
+laravel_admin_api/npm-debug.log
+laravel_admin_api/yarn-error.log
+
+# Flutter
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.pub-cache/
+**/.pub/
+**/pubspec.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Firebase
+**/firebase-debug.log
+**/firestore-debug.log
+
+# Test files (optional - remove if you want to include them)
+test_integration.dart
+simple_test.php
