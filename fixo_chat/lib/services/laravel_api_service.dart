@@ -3,7 +3,8 @@ import 'package:http/http.dart' as http;
 
 class LaravelApiService {
   // Update this URL to match your Laravel API endpoint
-  static const String baseUrl = 'http://127.0.0.1:8000/api';
+  // Use 10.0.2.2 for Android Emulator (maps to host machine's 127.0.0.1)
+  static const String baseUrl = 'http://10.0.2.2:8000/api';
 
   // Headers for API requests
   static const Map<String, String> headers = {
@@ -33,9 +34,12 @@ class LaravelApiService {
     double? hourlyRate, // Only for tradies
   }) async {
     try {
+      print('🚀 Attempting to save user to Laravel: $firebaseUid');
+
+      // Use direct save endpoint to ensure data saves
       final String endpoint = userType == 'homeowner'
-          ? '$baseUrl/homeowners'
-          : '$baseUrl/tradies';
+          ? '$baseUrl/direct-save-homeowner'
+          : '$baseUrl/direct-save-tradie';
 
       Map<String, dynamic> userData = {
         'firebase_uid': firebaseUid,
@@ -71,11 +75,13 @@ class LaravelApiService {
         body: json.encode(userData),
       );
 
-      if (response.statusCode == 201) {
-        print('User saved to Laravel successfully');
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print('✅ User saved to Laravel successfully: ${response.body}');
         return true;
       } else {
-        print('Failed to save user to Laravel: ${response.body}');
+        print(
+          '❌ Failed to save user to Laravel: ${response.statusCode} - ${response.body}',
+        );
         return false;
       }
     } catch (e) {

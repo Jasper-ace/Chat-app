@@ -56,7 +56,7 @@ class AuthService {
         String collection = userType == 'homeowner' ? 'homeowners' : 'tradies';
         await _firestore.collection(collection).doc(user.uid).set(userData);
 
-        // Also save to Laravel database
+        // Also save to Laravel database with comprehensive data
         await LaravelApiService.saveUserToLaravel(
           firebaseUid: user.uid,
           firstName: name.split(' ').first,
@@ -64,6 +64,19 @@ class AuthService {
           email: email,
           userType: userType,
           tradeType: tradeType,
+          // Pass additional data if available
+          middleName: additionalData?['middle_name'],
+          phone: additionalData?['phone'],
+          address: additionalData?['address'],
+          city: additionalData?['city'],
+          region: additionalData?['region'],
+          postalCode: additionalData?['postal_code'],
+          latitude: additionalData?['latitude'],
+          longitude: additionalData?['longitude'],
+          businessName: additionalData?['business_name'],
+          licenseNumber: additionalData?['license_number'],
+          yearsExperience: additionalData?['years_experience'],
+          hourlyRate: additionalData?['hourly_rate'],
         );
 
         return result;

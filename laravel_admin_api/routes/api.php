@@ -82,9 +82,28 @@ Route::prefix('chats')->group(function () {
     Route::post('sync-firebase', [ChatController::class, 'syncFirebaseMessages']);
 });
 
+// Test routes
+Route::get('test', [App\Http\Controllers\Api\TestController::class, 'test']);
+Route::get('test-database', [App\Http\Controllers\Api\TestController::class, 'testDatabase']);
+Route::post('test-create-homeowner', [App\Http\Controllers\Api\TestController::class, 'testCreateHomeowner']);
+
+// Direct save routes (no Firebase dependency)
+Route::post('direct-save-homeowner', [App\Http\Controllers\Api\DirectSaveController::class, 'saveHomeowner']);
+Route::post('direct-save-tradie', [App\Http\Controllers\Api\DirectSaveController::class, 'saveTradie']);
+Route::get('get-homeowners', [App\Http\Controllers\Api\DirectSaveController::class, 'getHomeowners']);
+
+// Simple homeowner creation without Firebase dependency
+Route::post('homeowners-simple', [App\Http\Controllers\Api\TestController::class, 'testCreateHomeowner']);
+
 // Protected routes for authenticated users
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
+});
+
+// Chat Sync API - save Firebase messages to MySQL
+Route::prefix('chat-sync')->group(function () {
+    Route::post('from-firebase', [ChatController::class, 'storeFirebaseMessagesToMySQL']);
+    Route::post('to-firebase', [ChatController::class, 'pushMessagesToFirebase']);
 });

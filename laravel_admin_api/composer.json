@@ -8,11 +8,11 @@
     "require": {
         "php": "^8.0",
         "filament/filament": "^4.0",
+        "guzzlehttp/guzzle": "^7.0",
+        "kreait/firebase-php": "^7.23",
         "laravel/framework": "^12.0",
         "laravel/sanctum": "^4.2",
-        "laravel/tinker": "^2.10.1",
-        "kreait/firebase-php": "^7.0",
-        "guzzlehttp/guzzle": "^7.0"
+        "laravel/tinker": "^2.10.1"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

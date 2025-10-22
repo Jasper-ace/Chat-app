@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 import 'laravel_api_service.dart';
 
@@ -79,8 +80,12 @@ class DualStorageService {
       );
 
       if (result?.user != null) {
-        // Additional Laravel save with comprehensive data
-        await LaravelApiService.saveUserToLaravel(
+        print(
+          '🔥 DualStorageService: Firebase registration successful, now saving to Laravel...',
+        );
+
+        // Additional Laravel save with comprehensive data using direct save endpoint
+        final laravelSuccess = await LaravelApiService.saveUserToLaravel(
           firebaseUid: result!.user!.uid,
           firstName: firstName,
           lastName: lastName,
@@ -100,6 +105,16 @@ class DualStorageService {
           yearsExperience: yearsExperience,
           hourlyRate: hourlyRate,
         );
+
+        if (laravelSuccess) {
+          print(
+            '🎉 DualStorageService: User saved to BOTH Firebase AND MySQL successfully!',
+          );
+        } else {
+          print(
+            '⚠️ DualStorageService: Firebase worked but Laravel save failed',
+          );
+        }
       }
 
       return result;
@@ -292,6 +307,30 @@ class DualStorageService {
     } catch (e) {
       print('Search tradies error: $e');
       return null;
+    }
+  }
+
+  /// Test Laravel API connection
+  Future<bool> testLaravelConnection() async {
+    try {
+      print('🧪 Testing Laravel API connection...');
+
+      // Test with a simple API call using LaravelApiService baseUrl
+      final response = await http.get(
+        Uri.parse('${LaravelApiService.baseUrl}/test'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        print('✅ Laravel API connection successful!');
+        return true;
+      } else {
+        print('❌ Laravel API connection failed: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      print('❌ Laravel API connection error: $e');
+      return false;
     }
   }
 }

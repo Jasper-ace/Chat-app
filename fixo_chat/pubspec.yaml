@@ -29,6 +29,16 @@ dependencies:
   cloud_firestore: ^6.0.2
   firebase_auth: ^6.1.0
   firebase_database: ^12.0.2
+  
+  # Image and file handling
+  image_picker: ^1.0.4
+  file_picker: ^8.0.0
+  
+  # URL launcher for phone calls and links
+  url_launcher: ^6.2.1
+  
+  # Permissions
+  permission_handler: ^11.0.1
 
 dev_dependencies:
   flutter_test:
