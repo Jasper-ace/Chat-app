@@ -119,7 +119,10 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                     subtitle: 'Chat with tradies',
                     color: Colors.blueAccent,
                     onTap: () {
-                      authViewModel.openChat(context);
+                      authViewModel.openChat(
+                        context,
+                        1,
+                      ); // TODO: Replace with actual user ID
                     },
                   ),
                   _buildActionCard(

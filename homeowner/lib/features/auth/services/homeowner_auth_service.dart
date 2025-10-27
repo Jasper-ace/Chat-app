@@ -60,7 +60,7 @@ class HomeownerAuthService {
   }
 
   // Open chat for homeowner
-  void openChat(BuildContext context) {
-    ChatHelpers.openChatList(context, 'homeowner');
+  void openChat(BuildContext context, int currentUserId) {
+    ChatHelpers.openChatList(context, 'homeowner', currentUserId);
   }
 }

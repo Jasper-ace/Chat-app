@@ -148,8 +148,8 @@ class FirebaseAuthViewModel extends StateNotifier<FirebaseAuthState> {
     state = state.copyWith(error: null);
   }
 
-  void openChat(BuildContext context) {
-    _authService.openChat(context);
+  void openChat(BuildContext context, int currentUserId) {
+    _authService.openChat(context, currentUserId);
   }
 }
 

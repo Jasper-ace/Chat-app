@@ -1,23 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'dart:io';
+import 'dart:async';
+
 import '../services/chat_service.dart';
 import '../services/dual_storage_service.dart';
+import '../services/user_presence_service.dart';
+
+import '../utils/user_id_converter.dart';
 import '../models/message_model.dart';
 import '../models/user_model.dart';
+
+import '../widgets/chat_menu_widget.dart';
+import '../widgets/job_confirmation_widget.dart';
+import 'user_profile_screen.dart';
+import 'enhanced_user_profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final UserModel otherUser;
   final String currentUserType;
+  final int currentUserId; // Add the actual current user ID (integer)
 
   const ChatScreen({
     super.key,
     required this.otherUser,
     required this.currentUserType,
+    required this.currentUserId,
   });
 
   @override
@@ -27,16 +39,43 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final ChatService _chatService = ChatService();
   final DualStorageService _dualStorageService = DualStorageService();
+  final UserPresenceService _presenceService = UserPresenceService();
+  final TypingService _typingService = TypingService();
+
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _imagePicker = ImagePicker();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   bool _isTyping = false;
-  bool _isOnline = true;
+
+  bool _isOnline = false;
+  String _userStatus = 'Offline';
   bool _showEmojiPicker = false;
   bool _isRecording = false;
-  String _searchQuery = '';
-  List<MessageModel> _searchResults = [];
+  // Removed unused search fields
+  Timer? _typingTimer;
+  Timer? _typingDebounceTimer;
+
+  // Get current user ID from Firebase Auth (for Firebase operations)
+  String? get firebaseUserId => _auth.currentUser?.uid;
+
+  // Get current user ID as integer (for message comparison)
+  int get currentUserIdAsInt {
+    final firebaseUid = _auth.currentUser?.uid;
+    if (firebaseUid != null) {
+      return UserIdConverter.firebaseUidToInt(firebaseUid);
+    }
+    return widget.currentUserId;
+  }
+
+  StreamSubscription<String>? _typingSubscription;
+  StreamSubscription<Map<String, dynamic>>? _presenceSubscription;
+
+  // Block status tracking
+  bool _isBlocked = false;
+  bool _canChat = true;
+  String? _blockReason;
 
   // Animation controllers
   late AnimationController _typingAnimationController;
@@ -77,10 +116,29 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Mark messages as read when entering chat
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _chatService.markMessagesAsRead(widget.otherUser.id);
+      _checkBlockStatus();
+      _presenceService.setUserOnline(); // Set current user online
     });
 
     // Listen for typing indicator
     _messageController.addListener(_onTypingChanged);
+
+    // Typing indicators disabled - collections removed
+
+    // Listen for other user's presence status
+    _presenceSubscription = _presenceService
+        .getUserPresence(widget.otherUser.id)
+        .listen((presenceData) {
+          final isOnline = presenceData['isOnline'] ?? false;
+          final statusText = presenceData['statusText'] ?? 'Offline';
+
+          if (mounted && (isOnline != _isOnline || statusText != _userStatus)) {
+            setState(() {
+              _isOnline = isOnline;
+              _userStatus = statusText;
+            });
+          }
+        });
   }
 
   @override
@@ -89,34 +147,60 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _scrollController.dispose();
     _typingAnimationController.dispose();
     _messageAnimationController.dispose();
+    _typingTimer?.cancel();
+    _typingDebounceTimer?.cancel();
+    _typingSubscription?.cancel();
+    _presenceSubscription?.cancel();
+
+    // Typing indicators disabled
+
+    // Set user offline when leaving chat
+    _presenceService.setUserOffline();
+
+    // Dispose services
+    _typingService.dispose();
+    _presenceService.dispose();
+
     super.dispose();
   }
 
   void _onTypingChanged() {
     final isCurrentlyTyping = _messageController.text.isNotEmpty;
+
+    // Only update state if typing status actually changed
     if (isCurrentlyTyping != _isTyping) {
-      setState(() {
-        _isTyping = isCurrentlyTyping;
-      });
+      _isTyping = isCurrentlyTyping;
+      // Don't call setState here to avoid rebuilds
     }
+
+    // Cancel previous debounce timer
+    _typingDebounceTimer?.cancel();
+
+    // Typing indicators disabled - collections removed
   }
 
   void _sendMessage({String? customMessage}) async {
     final message = customMessage ?? _messageController.text.trim();
     if (message.isEmpty) return;
 
+    // Check if chat is blocked
+    if (!_canChat) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_blockReason ?? 'Cannot send message: Chat is blocked'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     try {
-      // Use dual storage service for comprehensive message handling
-      await _dualStorageService.sendMessage(
+      // Use chat service directly for better reliability
+      await _chatService.sendMessage(
         receiverId: widget.otherUser.id,
         message: message,
         senderUserType: widget.currentUserType,
         receiverUserType: widget.otherUser.userType,
-        metadata: {
-          'timestamp': DateTime.now().toIso8601String(),
-          'platform': 'mobile',
-          'messageType': 'text',
-        },
       );
 
       if (customMessage == null) {
@@ -126,6 +210,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       setState(() {
         _isTyping = false;
       });
+
+      // Typing indicators disabled
 
       // Animate message send
       _messageAnimationController.forward().then((_) {
@@ -292,10 +378,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             prefixIcon: Icon(Icons.search),
           ),
           onChanged: (value) {
-            setState(() {
-              _searchQuery = value;
-            });
             // TODO: Implement message search
+            // setState(() {
+            //   _searchQuery = value;
+            // });
           },
         ),
         actions: [
@@ -344,158 +430,103 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        backgroundColor: Colors.blueAccent,
+        backgroundColor: const Color(0xFF4A90E2),
         elevation: 0,
-        title: Row(
-          children: [
-            Stack(
-              children: [
-                CircleAvatar(
-                  backgroundImage: widget.otherUser.avatar != null
-                      ? NetworkImage(widget.otherUser.avatar!)
-                      : const NetworkImage(
-                          'https://cdn-icons-png.flaticon.com/512/149/149071.png',
-                        ),
-                  radius: 18,
+        leading: IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+        ),
+        title: GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => EnhancedUserProfileScreen(
+                  user: widget.otherUser,
+                  currentUserType: widget.currentUserType,
                 ),
-                if (_isOnline)
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: Colors.green,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+            );
+          },
+          child: Row(
+            children: [
+              Stack(
                 children: [
-                  Text(
-                    widget.otherUser.displayName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  CircleAvatar(
+                    backgroundImage: widget.otherUser.avatar != null
+                        ? NetworkImage(widget.otherUser.avatar!)
+                        : const NetworkImage(
+                            'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+                          ),
+                    radius: 20,
                   ),
-                  Row(
-                    children: [
-                      Text(
-                        widget.otherUser.userType.toUpperCase(),
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 12,
+                  if (_isOnline)
+                    Positioned(
+                      bottom: 0,
+                      right: 0,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
                         ),
                       ),
-                      if (_isTyping) ...[
-                        const SizedBox(width: 8),
-                        AnimatedBuilder(
-                          animation: _typingAnimationController,
-                          builder: (context, child) {
-                            return Text(
-                              'typing...',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                                fontStyle: FontStyle.italic,
-                              ),
-                            );
-                          },
-                        ),
-                      ] else if (_isOnline) ...[
-                        const SizedBox(width: 8),
-                        const Text(
-                          'online',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ],
-                  ),
+                    ),
                 ],
               ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.search, color: Colors.white),
-            onPressed: _searchMessages,
-          ),
-          IconButton(
-            icon: const Icon(Icons.phone, color: Colors.white),
-            onPressed: _makePhoneCall,
-          ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white),
-            onSelected: (value) {
-              switch (value) {
-                case 'schedule':
-                  _scheduleAppointment();
-                  break;
-                case 'quote':
-                  _requestQuote();
-                  break;
-                case 'profile':
-                  // TODO: Show user profile
-                  break;
-                case 'block':
-                  // TODO: Block user
-                  break;
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'schedule',
-                child: Row(
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.calendar_today),
-                    SizedBox(width: 8),
-                    Text('Schedule Appointment'),
-                  ],
-                ),
-              ),
-              if (widget.currentUserType == 'homeowner')
-                const PopupMenuItem(
-                  value: 'quote',
-                  child: Row(
-                    children: [
-                      Icon(Icons.request_quote),
-                      SizedBox(width: 8),
-                      Text('Request Quote'),
-                    ],
-                  ),
-                ),
-              const PopupMenuItem(
-                value: 'profile',
-                child: Row(
-                  children: [
-                    Icon(Icons.person),
-                    SizedBox(width: 8),
-                    Text('View Profile'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'block',
-                child: Row(
-                  children: [
-                    Icon(Icons.block, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Block User', style: TextStyle(color: Colors.red)),
+                    Text(
+                      widget.otherUser.displayName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      _isOnline ? 'Active now' : _userStatus,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   ],
                 ),
               ),
             ],
+          ),
+        ),
+        actions: [
+          IconButton(
+            onPressed: () {
+              showModalBottomSheet(
+                context: context,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (context) => ChatMenuWidget(
+                  otherUser: widget.otherUser,
+                  currentUserType: widget.currentUserType,
+                  onArchive: () => _archiveChat(),
+                  onDelete: () => _deleteChat(),
+                  onBlock: () => _blockUser(),
+                  onMute: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Notifications muted')),
+                    );
+                  },
+                ),
+              );
+            },
+            icon: const Icon(Icons.more_vert, color: Colors.white),
           ),
         ],
       ),
@@ -523,165 +554,215 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   );
                 }
 
+                final allMessages = snapshot.data!.docs
+                    .map((doc) => MessageModel.fromFirestore(doc))
+                    .toList();
+
+                // Filter messages based on delete status
                 final messages =
-                    snapshot.data!.docs
-                        .map((doc) => MessageModel.fromFirestore(doc))
-                        .toList()
-                      ..sort(
-                        (a, b) => b.timestamp.compareTo(a.timestamp),
-                      ); // Sort by timestamp descending
+                    allMessages.where((message) {
+                      // Show all non-deleted messages
+                      if (!message.isDeleted) return true;
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  reverse: true,
-                  padding: const EdgeInsets.all(16),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-                    final isMe =
-                        message.senderUserType == widget.currentUserType;
-                    final showAvatar =
-                        index == messages.length - 1 ||
-                        messages[index + 1].senderUserType !=
-                            message.senderUserType;
+                      // For deleted messages, only show to the user who deleted them
+                      // We'll use the sender type to determine if current user deleted it
+                      return message.senderId == currentUserIdAsInt;
+                    }).toList()..sort(
+                      (a, b) => b.date.compareTo(a.date),
+                    ); // Sort by timestamp descending
 
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        mainAxisAlignment: isMe
-                            ? MainAxisAlignment.end
-                            : MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (!isMe) ...[
-                            showAvatar
-                                ? CircleAvatar(
-                                    backgroundImage:
-                                        widget.otherUser.avatar != null
-                                        ? NetworkImage(widget.otherUser.avatar!)
-                                        : const NetworkImage(
-                                            'https://cdn-icons-png.flaticon.com/512/149/149071.png',
-                                          ),
-                                    radius: 16,
-                                  )
-                                : const SizedBox(width: 32),
-                            const SizedBox(width: 8),
-                          ],
-                          Flexible(
-                            child: GestureDetector(
-                              onLongPress: () => _showMessageOptions(message),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isMe
-                                      ? Colors.blueAccent
-                                      : Colors.grey[300],
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(20),
-                                    topRight: const Radius.circular(20),
-                                    bottomLeft: Radius.circular(isMe ? 20 : 4),
-                                    bottomRight: Radius.circular(isMe ? 4 : 20),
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.1,
+                return Column(
+                  children: [
+                    // Typing indicator disabled - collections removed
+
+                    // Messages ListView with fixed itemCount
+                    Expanded(
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        reverse: true,
+                        padding: const EdgeInsets.all(16),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final message = messages[index];
+                          final isMe = message.senderId == currentUserIdAsInt;
+                          final showAvatar =
+                              index == messages.length - 1 ||
+                              messages[index + 1].senderId != message.senderId;
+
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              mainAxisAlignment: isMe
+                                  ? MainAxisAlignment.end
+                                  : MainAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (!isMe) ...[
+                                  showAvatar
+                                      ? CircleAvatar(
+                                          backgroundImage:
+                                              widget.otherUser.avatar != null
+                                              ? NetworkImage(
+                                                  widget.otherUser.avatar!,
+                                                )
+                                              : const NetworkImage(
+                                                  'https://cdn-icons-png.flaticon.com/512/149/149071.png',
+                                                ),
+                                          radius: 16,
+                                        )
+                                      : const SizedBox(width: 32),
+                                  const SizedBox(width: 8),
+                                ],
+                                Flexible(
+                                  child: GestureDetector(
+                                    onLongPress: () =>
+                                        _showMessageOptions(message),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 12,
                                       ),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildMessageContent(message, isMe),
-                                    const SizedBox(height: 4),
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          _formatTime(message.timestamp),
-                                          style: TextStyle(
-                                            color: isMe
-                                                ? Colors.white70
-                                                : Colors.grey[600],
-                                            fontSize: 12,
+                                      decoration: BoxDecoration(
+                                        color:
+                                            (message.isDeleted ||
+                                                message.isUnsent)
+                                            ? Colors.grey[400]?.withOpacity(0.6)
+                                            : isMe
+                                            ? const Color(0xFF4A90E2)
+                                            : const Color(0xFF2D2D2D),
+                                        borderRadius: BorderRadius.only(
+                                          topLeft: const Radius.circular(18),
+                                          topRight: const Radius.circular(18),
+                                          bottomLeft: Radius.circular(
+                                            isMe ? 18 : 4,
+                                          ),
+                                          bottomRight: Radius.circular(
+                                            isMe ? 4 : 18,
                                           ),
                                         ),
-                                        if (isMe) ...[
-                                          const SizedBox(width: 4),
-                                          Icon(
-                                            message.read
-                                                ? Icons.done_all
-                                                : Icons.done,
-                                            size: 16,
-                                            color: message.read
-                                                ? Colors.blue[200]
-                                                : Colors.white70,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          _buildMessageContent(message, isMe),
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                _formatTime(message.date),
+                                                style: TextStyle(
+                                                  color: isMe
+                                                      ? Colors.white70
+                                                      : Colors.grey[400],
+                                                  fontSize: 11,
+                                                ),
+                                              ),
+                                              if (isMe) ...[
+                                                const SizedBox(width: 4),
+                                                Icon(
+                                                  message.read
+                                                      ? Icons.done_all
+                                                      : Icons.done,
+                                                  size: 16,
+                                                  color: message.read
+                                                      ? Colors.blue[200]
+                                                      : Colors.white70,
+                                                ),
+                                              ],
+                                            ],
                                           ),
                                         ],
-                                      ],
+                                      ),
                                     ),
-                                  ],
+                                  ),
                                 ),
-                              ),
+                                if (isMe) ...[
+                                  const SizedBox(width: 8),
+                                  showAvatar
+                                      ? CircleAvatar(
+                                          backgroundColor: Colors.blueAccent,
+                                          radius: 16,
+                                          child: const Icon(
+                                            Icons.person,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                        )
+                                      : const SizedBox(width: 32),
+                                ],
+                              ],
                             ),
-                          ),
-                          if (isMe) ...[
-                            const SizedBox(width: 8),
-                            showAvatar
-                                ? CircleAvatar(
-                                    backgroundColor: Colors.blueAccent,
-                                    radius: 16,
-                                    child: const Icon(
-                                      Icons.person,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                  )
-                                : const SizedBox(width: 32),
-                          ],
-                        ],
+                          );
+                        },
                       ),
-                    );
-                  },
+                    ),
+                  ],
                 );
               },
             ),
           ),
 
-          // Quick replies bar
-          if (widget.currentUserType == 'homeowner' ||
-              widget.currentUserType == 'tradie')
+          // Job confirmation widget (example)
+          const JobConfirmationWidget(
+            jobTitle: 'Kitchen Sink Plumbing Repair',
+            status: 'confirmed',
+          ),
+
+          // Block status banner
+          if (!_canChat && _blockReason != null)
             Container(
-              height: 50,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children:
-                    (widget.currentUserType == 'homeowner'
-                            ? _homeownerQuickReplies.take(3)
-                            : _tradieQuickReplies.take(3))
-                        .map(
-                          (reply) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: ActionChip(
-                              label: Text(reply),
-                              onPressed: () =>
-                                  _sendMessage(customMessage: reply),
-                              backgroundColor: Colors.blue[50],
-                              labelStyle: const TextStyle(
-                                color: Colors.blueAccent,
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              color: Colors.red[50],
+              child: Row(
+                children: [
+                  const Icon(Icons.block, color: Colors.red, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _blockReason!,
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  if (_blockReason == 'You have blocked this user')
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          await _chatService.unblockUser(widget.otherUser.id);
+                          await _checkBlockStatus();
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  '${widget.otherUser.displayName} has been unblocked',
+                                ),
+                                backgroundColor: Colors.green,
                               ),
-                            ),
-                          ),
-                        )
-                        .toList(),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      child: const Text(
+                        'Unblock',
+                        style: TextStyle(color: Colors.blue),
+                      ),
+                    ),
+                ],
               ),
             ),
 
@@ -705,48 +786,69 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   children: [
                     // Attachment button
                     IconButton(
-                      icon: const Icon(Icons.attach_file, color: Colors.grey),
-                      onPressed: () => _showAttachmentOptions(),
+                      icon: Icon(
+                        Icons.attach_file,
+                        color: _canChat ? Colors.grey : Colors.grey[400],
+                      ),
+                      onPressed: _canChat
+                          ? () => _showAttachmentOptions()
+                          : null,
                     ),
 
                     // Message input field
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.grey[100],
+                          color: _canChat ? Colors.white : Colors.grey[200],
                           borderRadius: BorderRadius.circular(25),
+                          border: Border.all(color: Colors.grey[300]!),
                         ),
                         child: Row(
                           children: [
+                            IconButton(
+                              icon: Icon(
+                                Icons.attach_file,
+                                color: _canChat
+                                    ? Colors.grey[600]
+                                    : Colors.grey[400],
+                              ),
+                              onPressed: _canChat
+                                  ? _showAttachmentOptions
+                                  : null,
+                            ),
                             Expanded(
                               child: TextField(
                                 controller: _messageController,
-                                decoration: InputDecoration(
-                                  hintText:
-                                      widget.currentUserType == 'homeowner'
-                                      ? 'Ask about services, pricing, availability...'
-                                      : 'Respond to client inquiries...',
+                                enabled: _canChat,
+                                decoration: const InputDecoration(
+                                  hintText: 'Type your message...',
                                   border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8,
                                     vertical: 12,
                                   ),
                                 ),
                                 maxLines: null,
                                 textInputAction: TextInputAction.send,
-                                onSubmitted: (_) => _sendMessage(),
+                                onSubmitted: _canChat
+                                    ? (_) => _sendMessage()
+                                    : null,
                               ),
                             ),
                             IconButton(
-                              icon: const Icon(
+                              icon: Icon(
                                 Icons.emoji_emotions_outlined,
-                                color: Colors.grey,
+                                color: _canChat
+                                    ? const Color(0xFFFFA500)
+                                    : Colors.grey[400],
                               ),
-                              onPressed: () {
-                                setState(() {
-                                  _showEmojiPicker = !_showEmojiPicker;
-                                });
-                              },
+                              onPressed: _canChat
+                                  ? () {
+                                      setState(() {
+                                        _showEmojiPicker = !_showEmojiPicker;
+                                      });
+                                    }
+                                  : null,
                             ),
                           ],
                         ),
@@ -755,70 +857,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
                     const SizedBox(width: 8),
 
-                    // Send/Voice button
+                    // Send button
                     AnimatedBuilder(
                       animation: _messageAnimationController,
                       builder: (context, child) {
+                        final canSend =
+                            _canChat && _messageController.text.isNotEmpty;
                         return Container(
                           decoration: BoxDecoration(
-                            color: _messageController.text.isNotEmpty
-                                ? Colors.blueAccent
-                                : Colors.grey,
+                            color: canSend
+                                ? const Color(0xFF4A90E2)
+                                : Colors.grey[400],
                             shape: BoxShape.circle,
                           ),
                           child: IconButton(
-                            icon: Icon(
-                              _messageController.text.isNotEmpty
-                                  ? Icons.send
-                                  : Icons.mic,
-                              color: Colors.white,
-                            ),
-                            onPressed: _messageController.text.isNotEmpty
-                                ? _sendMessage
-                                : _startVoiceRecording,
+                            icon: const Icon(Icons.send, color: Colors.white),
+                            onPressed: canSend ? _sendMessage : null,
                           ),
                         );
                       },
                     ),
-
-                    // Quick replies button
-                    IconButton(
-                      icon: const Icon(Icons.reply, color: Colors.grey),
-                      onPressed: _showQuickReplies,
-                    ),
                   ],
                 ),
-
-                // Professional features for tradies
-                if (widget.currentUserType == 'tradie')
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _buildProfessionalButton(
-                          icon: Icons.schedule,
-                          label: 'Schedule',
-                          onPressed: _scheduleAppointment,
-                        ),
-                        _buildProfessionalButton(
-                          icon: Icons.request_quote,
-                          label: 'Quote',
-                          onPressed: () => _sendQuote(),
-                        ),
-                        _buildProfessionalButton(
-                          icon: Icons.photo_camera,
-                          label: 'Photo',
-                          onPressed: _sendImage,
-                        ),
-                        _buildProfessionalButton(
-                          icon: Icons.location_on,
-                          label: 'Location',
-                          onPressed: _sendLocation,
-                        ),
-                      ],
-                    ),
-                  ),
               ],
             ),
           ),
@@ -828,8 +888,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildMessageContent(MessageModel message, bool isMe) {
+    // Handle deleted messages (only show for the user who deleted it)
+    if (message.isDeleted) {
+      return Text(
+        'You deleted this message',
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: 14,
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+
+    // Handle unsent messages
+    if (message.isUnsent) {
+      return Text(
+        'This message was unsent',
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: 14,
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
+
     // Handle different message types
-    if (message.message.startsWith('📷')) {
+    if (message.content.startsWith('📷')) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -844,14 +928,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ],
       );
-    } else if (message.message.startsWith('📄')) {
+    } else if (message.content.startsWith('📄')) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.attach_file, color: Colors.white70, size: 16),
           const SizedBox(width: 4),
           Text(
-            message.message.substring(2),
+            message.content.substring(2),
             style: TextStyle(
               color: isMe ? Colors.white : Colors.black87,
               fontSize: 16,
@@ -859,7 +943,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ],
       );
-    } else if (message.message.startsWith('📅')) {
+    } else if (message.content.startsWith('📅')) {
       return Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -886,7 +970,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ],
         ),
       );
-    } else if (message.message.startsWith('💰')) {
+    } else if (message.content.startsWith('💰')) {
       return Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -916,12 +1000,29 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
 
     // Regular text message
-    return Text(
-      message.message,
-      style: TextStyle(
-        color: isMe ? Colors.white : Colors.black87,
-        fontSize: 16,
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          message.content,
+          style: TextStyle(
+            color: isMe ? Colors.white : Colors.white,
+            fontSize: 16,
+          ),
+        ),
+        if (message.isEdited)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              'edited',
+              style: TextStyle(
+                color: isMe ? Colors.white60 : Colors.grey[400],
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -960,18 +1061,35 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _showMessageOptions(MessageModel message) {
+    // Don't show options for deleted or unsent messages
+    if (message.isDeleted || message.isUnsent) {
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) => Container(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
             ListTile(
               leading: const Icon(Icons.copy),
               title: const Text('Copy'),
               onTap: () {
-                Clipboard.setData(ClipboardData(text: message.message));
+                Clipboard.setData(ClipboardData(text: message.content));
                 Navigator.pop(context);
                 ScaffoldMessenger.of(
                   context,
@@ -983,32 +1101,236 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               title: const Text('Reply'),
               onTap: () {
                 Navigator.pop(context);
-                _messageController.text =
-                    'Replying to: "${message.message}"\n\n';
+                _replyToMessage(message);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.star_border),
-              title: const Text('Star Message'),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Implement star message
-              },
-            ),
-            if (message.senderUserType == widget.currentUserType)
+            if (message.senderId == currentUserIdAsInt) ...[
               ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
+                leading: const Icon(Icons.edit, color: Colors.blue),
+                title: const Text('Edit', style: TextStyle(color: Colors.blue)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _editMessage(message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.orange),
                 title: const Text(
-                  'Delete',
+                  'Delete for Me',
+                  style: TextStyle(color: Colors.orange),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteMessageForMe(message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_forever, color: Colors.red),
+                title: const Text(
+                  'Unsend',
                   style: TextStyle(color: Colors.red),
                 ),
                 onTap: () {
                   Navigator.pop(context);
-                  // TODO: Implement delete message
+                  _showUnsendConfirmation(message);
                 },
               ),
+            ] else ...[
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.orange),
+                title: const Text(
+                  'Delete for Me',
+                  style: TextStyle(color: Colors.orange),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteMessageForMe(message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.report, color: Colors.red),
+                title: const Text(
+                  'Report',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _reportMessage(message);
+                },
+              ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  void _deleteMessageForMe(MessageModel message) async {
+    try {
+      await _chatService.deleteMessageForMe(message.id);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Message deleted')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete message: $e')));
+      }
+    }
+  }
+
+  void _showUnsendConfirmation(MessageModel message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unsend Message'),
+        content: const Text(
+          'Are you sure you want to unsend this message? It will be removed for everyone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _unsendMessage(message);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Unsend'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _unsendMessage(MessageModel message) async {
+    try {
+      await _chatService.unsendMessage(message.id);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Message unsent')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to unsend message: $e')));
+      }
+    }
+  }
+
+  void _editMessage(MessageModel message) {
+    final TextEditingController editController = TextEditingController(
+      text: message.content,
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Message'),
+        content: TextField(
+          controller: editController,
+          decoration: const InputDecoration(
+            hintText: 'Edit your message...',
+            border: OutlineInputBorder(),
+          ),
+          maxLines: null,
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final newContent = editController.text.trim();
+              if (newContent.isNotEmpty && newContent != message.content) {
+                try {
+                  await _chatService.editMessage(message.id, newContent);
+                  Navigator.pop(context);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Message edited')),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Failed to edit message: $e')),
+                    );
+                  }
+                }
+              } else {
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _replyToMessage(MessageModel message) {
+    setState(() {
+      _messageController.text = 'Replying to: "${message.content}"\n\n';
+    });
+    // Focus on the text field
+    FocusScope.of(context).requestFocus(FocusNode());
+  }
+
+  void _reportMessage(MessageModel message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Report Message'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Why are you reporting this message?'),
+            const SizedBox(height: 16),
+            ...['Spam', 'Harassment', 'Inappropriate content', 'Other'].map(
+              (reason) => ListTile(
+                title: Text(reason),
+                onTap: () async {
+                  try {
+                    await _chatService.reportUser(
+                      reportedUserId: widget.otherUser.id,
+                      reason: reason,
+                      description: 'Reported message: "${message.content}"',
+                      chatId: message.chatId,
+                    );
+                    Navigator.pop(context);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Message reported')),
+                      );
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to report: $e')),
+                      );
+                    }
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
       ),
     );
   }
@@ -1207,6 +1529,210 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       return '${difference.inMinutes}m ago';
     } else {
       return 'now';
+    }
+  }
+
+  Future<void> _checkBlockStatus() async {
+    try {
+      final blockStatus = await _chatService.getChatBlockStatus(
+        widget.otherUser.id,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isBlocked = blockStatus['isBlocked'] ?? false;
+          _canChat = blockStatus['canChat'] ?? true;
+
+          if (blockStatus['userBlocked'] == true) {
+            _blockReason = 'You have blocked this user';
+          } else if (blockStatus['blockedByUser'] == true) {
+            _blockReason = 'This user has blocked you';
+          } else if (_isBlocked) {
+            _blockReason = 'Chat is blocked';
+          } else {
+            _blockReason = null;
+          }
+        });
+      }
+    } catch (e) {
+      print('Error checking block status: $e');
+    }
+  }
+
+  void _showUserProfile() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => UserProfileScreen(
+          user: widget.otherUser,
+          currentUserType: widget.currentUserType,
+        ),
+      ),
+    ).then((_) {
+      // Refresh block status when returning from profile
+      _checkBlockStatus();
+    });
+  }
+
+  void _showBlockUserDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Block ${widget.otherUser.displayName}?'),
+        content: Text(
+          'Are you sure you want to block ${widget.otherUser.displayName}? '
+          'You will no longer receive messages from this user.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                await _chatService.blockUser(widget.otherUser.id);
+                Navigator.pop(context); // Close dialog
+
+                // Refresh block status
+                await _checkBlockStatus();
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '${widget.otherUser.displayName} has been blocked',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              } catch (e) {
+                Navigator.pop(context);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error blocking user: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Block User'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showUnblockUserDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Unblock ${widget.otherUser.displayName}?'),
+        content: Text(
+          'Are you sure you want to unblock ${widget.otherUser.displayName}? '
+          'You will be able to send and receive messages again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                await _chatService.unblockUser(widget.otherUser.id);
+                Navigator.pop(context); // Close dialog
+
+                // Refresh block status
+                await _checkBlockStatus();
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '${widget.otherUser.displayName} has been unblocked',
+                      ),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                Navigator.pop(context);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error unblocking user: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('Unblock User'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteChat() async {
+    try {
+      await _chatService.deleteChat(widget.otherUser.id, deleteForBoth: false);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Chat deleted')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete chat: $e')));
+      }
+    }
+  }
+
+  void _archiveChat() async {
+    try {
+      await _chatService.archiveChat(widget.otherUser.id);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Chat archived')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to archive chat: $e')));
+      }
+    }
+  }
+
+  void _blockUser() async {
+    try {
+      await _chatService.blockUser(widget.otherUser.id);
+      await _checkBlockStatus();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${widget.otherUser.displayName} has been blocked'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to block user: $e')));
+      }
     }
   }
 }

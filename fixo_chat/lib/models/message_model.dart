@@ -1,26 +1,42 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum MessageType { text, image, system }
+
 class MessageModel {
-  final String id;
-  final String chatId;
-  final String senderId;
-  final String receiverId;
-  final String senderUserType;
-  final String receiverUserType;
-  final String message;
-  final DateTime timestamp;
+  final String id; // Firestore document ID
+  final int threadId; // Reference to thread document
+  final int senderId; // ID of the sender (tradie or homeowner)
+  final String senderType; // "tradie" or "homeowner"
+  final String content; // Message text
+  final DateTime date; // When the message was sent
+  final MessageType messageType;
+  final String? imageUrl;
+  final String? imageThumbnail;
   final bool read;
+  final bool isDeleted;
+  final bool isUnsent;
+  final bool isEdited;
+  final DateTime? editedAt;
+  final int? deletedBy;
+  final String? chatId; // For backward compatibility
 
   MessageModel({
     required this.id,
-    required this.chatId,
+    required this.threadId,
     required this.senderId,
-    required this.receiverId,
-    required this.senderUserType,
-    required this.receiverUserType,
-    required this.message,
-    required this.timestamp,
+    required this.senderType,
+    required this.content,
+    required this.date,
+    this.messageType = MessageType.text,
+    this.imageUrl,
+    this.imageThumbnail,
     this.read = false,
+    this.isDeleted = false,
+    this.isUnsent = false,
+    this.isEdited = false,
+    this.editedAt,
+    this.deletedBy,
+    this.chatId,
   });
 
   factory MessageModel.fromFirestore(DocumentSnapshot doc) {
@@ -28,51 +44,94 @@ class MessageModel {
 
     return MessageModel(
       id: doc.id,
-      chatId: data['chatId'] ?? '',
-      senderId: data['senderId'] ?? '',
-      receiverId: data['receiverId'] ?? '',
-      senderUserType: data['senderUserType'] ?? '',
-      receiverUserType: data['receiverUserType'] ?? '',
-      message: data['message'] ?? '',
-      timestamp: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      threadId: data['thread_id'] ?? 0,
+      senderId: data['sender_id'] ?? 0,
+      senderType: data['sender_type'] ?? '',
+      content: data['content'] ?? '',
+      date: (data['date'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      messageType: _parseMessageType(data['messageType']),
+      imageUrl: data['imageUrl'],
+      imageThumbnail: data['imageThumbnail'],
       read: data['read'] ?? false,
+      isDeleted: data['isDeleted'] ?? false,
+      isUnsent: data['isUnsent'] ?? false,
+      isEdited: data['isEdited'] ?? false,
+      editedAt: (data['editedAt'] as Timestamp?)?.toDate(),
+      deletedBy: data['deletedBy'],
+      chatId: data['chatId'],
     );
+  }
+
+  static MessageType _parseMessageType(dynamic value) {
+    if (value == null) return MessageType.text;
+    if (value is String) {
+      switch (value.toLowerCase()) {
+        case 'image':
+          return MessageType.image;
+        case 'system':
+          return MessageType.system;
+        default:
+          return MessageType.text;
+      }
+    }
+    return MessageType.text;
   }
 
   Map<String, dynamic> toFirestore() {
     return {
-      'chatId': chatId,
-      'senderId': senderId,
-      'receiverId': receiverId,
-      'senderUserType': senderUserType,
-      'receiverUserType': receiverUserType,
-      'message': message,
-      'timestamp': Timestamp.fromDate(timestamp),
+      'thread_id': threadId,
+      'sender_id': senderId,
+      'sender_type': senderType,
+      'content': content,
+      'date': Timestamp.fromDate(date),
+      'messageType': messageType.name,
+      'imageUrl': imageUrl,
+      'imageThumbnail': imageThumbnail,
       'read': read,
+      'isDeleted': isDeleted,
+      'isUnsent': isUnsent,
+      'isEdited': isEdited,
+      'editedAt': editedAt != null ? Timestamp.fromDate(editedAt!) : null,
+      'deletedBy': deletedBy,
+      'chatId': chatId,
     };
   }
 
   MessageModel copyWith({
     String? id,
-    String? chatId,
-    String? senderId,
-    String? receiverId,
-    String? senderUserType,
-    String? receiverUserType,
-    String? message,
-    DateTime? timestamp,
+    int? threadId,
+    int? senderId,
+    String? senderType,
+    String? content,
+    DateTime? date,
+    MessageType? messageType,
+    String? imageUrl,
+    String? imageThumbnail,
     bool? read,
+    bool? isDeleted,
+    bool? isUnsent,
+    bool? isEdited,
+    DateTime? editedAt,
+    int? deletedBy,
+    String? chatId,
   }) {
     return MessageModel(
       id: id ?? this.id,
-      chatId: chatId ?? this.chatId,
+      threadId: threadId ?? this.threadId,
       senderId: senderId ?? this.senderId,
-      receiverId: receiverId ?? this.receiverId,
-      senderUserType: senderUserType ?? this.senderUserType,
-      receiverUserType: receiverUserType ?? this.receiverUserType,
-      message: message ?? this.message,
-      timestamp: timestamp ?? this.timestamp,
+      senderType: senderType ?? this.senderType,
+      content: content ?? this.content,
+      date: date ?? this.date,
+      messageType: messageType ?? this.messageType,
+      imageUrl: imageUrl ?? this.imageUrl,
+      imageThumbnail: imageThumbnail ?? this.imageThumbnail,
       read: read ?? this.read,
+      isDeleted: isDeleted ?? this.isDeleted,
+      isUnsent: isUnsent ?? this.isUnsent,
+      isEdited: isEdited ?? this.isEdited,
+      editedAt: editedAt ?? this.editedAt,
+      deletedBy: deletedBy ?? this.deletedBy,
+      chatId: chatId ?? this.chatId,
     );
   }
 }

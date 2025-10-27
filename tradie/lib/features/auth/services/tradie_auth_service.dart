@@ -62,7 +62,7 @@ class TradieAuthService {
   }
 
   // Open chat for tradie
-  void openChat(BuildContext context) {
-    ChatHelpers.openChatList(context, 'tradie');
+  void openChat(BuildContext context, int currentUserId) {
+    ChatHelpers.openChatList(context, 'tradie', currentUserId);
   }
 }

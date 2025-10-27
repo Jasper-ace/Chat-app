@@ -2,9 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'chat_screen.dart';
-import 'package:fixo_chat/screens/user_list_screen.dart';
-import 'user_list_screen.dart';
 
 class UserListScreen extends StatelessWidget {
   const UserListScreen({super.key, required Map<String, dynamic> loggedInUser, required Object userType});

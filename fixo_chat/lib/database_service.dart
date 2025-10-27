@@ -21,16 +21,21 @@ class DatabaseService {
 
   /// Send a message
   Future<void> sendMessage(
-      String senderId, String receiverId, String message) async {
+    String senderId,
+    String receiverId,
+    String message,
+  ) async {
     final chatId = _getChatId(senderId, receiverId);
 
-    await _firestore.collection('chats').doc(chatId).collection('messages').add({
-      'senderId': senderId,
-      'receiverId': receiverId,
-      'message': message,
-      'timestamp': FieldValue.serverTimestamp(),
-      'read': false, // mark new messages as unread
-    });
+    await _firestore.collection('chats').doc(chatId).collection('messages').add(
+      {
+        'senderId': senderId,
+        'receiverId': receiverId,
+        'message': message,
+        'timestamp': FieldValue.serverTimestamp(),
+        'read': false, // mark new messages as unread
+      },
+    );
 
     // Optionally store metadata for quick access
     await _firestore.collection('chats').doc(chatId).set({
@@ -71,9 +76,10 @@ class DatabaseService {
 
   /// Fetch opposite role users
   Stream<QuerySnapshot> getOtherUsers(
-      String currentUserId, String currentUserRole) {
-    final targetRole =
-        currentUserRole == 'tradie' ? 'homeowner' : 'tradie';
+    String currentUserId,
+    String currentUserRole,
+  ) {
+    final targetRole = currentUserRole == 'tradie' ? 'homeowner' : 'tradie';
     return _firestore
         .collection('users')
         .where('role', isEqualTo: targetRole)
@@ -82,7 +88,9 @@ class DatabaseService {
 
   /// Get the last message info between two users
   Future<Map<String, dynamic>?> getLastMessage(
-      String userId, String otherUserId) async {
+    String userId,
+    String otherUserId,
+  ) async {
     final chatId = _getChatId(userId, otherUserId);
     final query = await _firestore
         .collection('chats')

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'login_page.dart';
 import 'test_dual_storage_widget.dart';
+import 'services/app_lifecycle_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -9,21 +10,40 @@ void main() async {
   runApp(MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  final AppLifecycleService _lifecycleService = AppLifecycleService();
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycleService.initialize();
+  }
+
+  @override
+  void dispose() {
+    _lifecycleService.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Chat App',
       debugShowCheckedModeBanner: false,
-      home: MainScreen(),
+      home: const MainScreen(),
     );
   }
 }
 
 class MainScreen extends StatelessWidget {
-  const MainScreen({Key? key}) : super(key: key);
+  const MainScreen({super.key});
 
   @override
   Widget build(BuildContext context) {

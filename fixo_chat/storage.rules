@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Chat images rules
+    match /chat_images/{chatId}/{imageId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+        request.auth.uid != null;
+      allow delete: if request.auth != null && 
+        request.auth.uid != null;
+    }
+    
+    // Chat thumbnails rules
+    match /chat_thumbnails/{chatId}/{thumbnailId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+        request.auth.uid != null;
+      allow delete: if request.auth != null && 
+        request.auth.uid != null;
+    }
+    
+    // User avatars rules
+    match /user_avatars/{userId}/{imageId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && 
+        request.auth.uid == userId;
+      allow delete: if request.auth != null && 
+        request.auth.uid == userId;
+    }
+    
+    // General file size and type restrictions
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null &&
+        resource.size < 10 * 1024 * 1024 && // 10MB limit
+        resource.contentType.matches('image/.*');
+    }
+  }
+}

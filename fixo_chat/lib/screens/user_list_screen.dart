@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../models/user_model.dart';
 import 'chat_screen.dart';
 
 class UserListScreen extends StatefulWidget {
@@ -74,12 +75,25 @@ class _UserListScreenState extends State<UserListScreen> {
                   title: Text(name),
                   subtitle: Text(user['email'] ?? ''),
                   onTap: () {
+                    // Create a UserModel from the API data
+                    final otherUser = UserModel(
+                      id: user['id'].toString(),
+                      name: name,
+                      email: user['email'] ?? '',
+                      userType: receiverType.toLowerCase(),
+                      tradeType: user['trade_type'],
+                      phone: user['phone'],
+                      avatar: user['avatar'],
+                      bio: user['bio'],
+                    );
+
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) => ChatScreen(
-                          receiverId: user['id'],
-                          receiverType: receiverType,
+                          otherUser: otherUser,
+                          currentUserType: widget.userType,
+                          currentUserId: widget.loggedInUser['id'] ?? 0,
                         ),
                       ),
                     );

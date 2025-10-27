@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'laravel_api_service.dart';
+import 'id_generator_service.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -33,24 +34,43 @@ class AuthService {
         // Update display name
         await user.updateDisplayName(name);
 
-        // Prepare user data
-        Map<String, dynamic> userData = {
-          'name': name,
-          'email': email,
-          'userType': userType,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        };
+        // Get auto-increment ID (shared sequence for both user types)
+        final autoId = await IdGeneratorService.getNextUserId(userType);
 
-        // Add trade type for tradies
-        if (userType == 'tradie' && tradeType != null) {
-          userData['tradeType'] = tradeType;
+        // Prepare user data based on user type with your exact structure
+        Map<String, dynamic> userData;
+
+        if (userType == 'tradie') {
+          // Tradie document structure
+          userData = {
+            'id': autoId,
+            'name': name,
+            'email': email,
+            'phone': additionalData?['phone'] ?? '',
+            'skills': additionalData?['skills'] ?? [],
+            'location': additionalData?['location'] ?? '',
+            'created_at': FieldValue.serverTimestamp(),
+            'updated_at': FieldValue.serverTimestamp(),
+          };
+        } else {
+          // Homeowner document structure
+          userData = {
+            'id': autoId,
+            'name': name,
+            'email': email,
+            'phone': additionalData?['phone'] ?? '',
+            'address': additionalData?['address'] ?? '',
+            'created_at': FieldValue.serverTimestamp(),
+            'updated_at': FieldValue.serverTimestamp(),
+          };
         }
 
         // Add any additional data
         if (additionalData != null) {
           userData.addAll(additionalData);
         }
+
+        print('✅ User registered with shared auto-increment ID: $autoId');
 
         // Save to appropriate collection based on user type
         String collection = userType == 'homeowner' ? 'homeowners' : 'tradies';

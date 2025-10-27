@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'services/dual_storage_service.dart';
 
 class TestDualStorageWidget extends StatefulWidget {
-  const TestDualStorageWidget({Key? key}) : super(key: key);
+  const TestDualStorageWidget({super.key});
 
   @override
   _TestDualStorageWidgetState createState() => _TestDualStorageWidgetState();

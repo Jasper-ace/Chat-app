@@ -5,11 +5,18 @@ import '../models/user_model.dart';
 
 class ChatHelpers {
   // Open chat list for a specific user type
-  static void openChatList(BuildContext context, String userType) {
+  static void openChatList(
+    BuildContext context,
+    String userType,
+    int currentUserId,
+  ) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ChatListScreen(currentUserType: userType),
+        builder: (context) => ChatListScreen(
+          currentUserType: userType,
+          currentUserId: currentUserId,
+        ),
       ),
     );
   }
@@ -19,12 +26,16 @@ class ChatHelpers {
     BuildContext context, {
     required UserModel otherUser,
     required String currentUserType,
+    required int currentUserId,
   }) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            ChatScreen(otherUser: otherUser, currentUserType: currentUserType),
+        builder: (context) => ChatScreen(
+          otherUser: otherUser,
+          currentUserType: currentUserType,
+          currentUserId: currentUserId,
+        ),
       ),
     );
   }
@@ -48,6 +59,13 @@ class ChatHelpers {
 
   // Get collection name for user type
   static String getCollectionName(String userType) {
-    return userType == 'homeowner' ? 'homeowners' : 'tradies';
+    return userType == 'homeowner'
+        ? 'homeowners'
+        : 'tradies'; // ← EDIT: Change collection names here
   }
+
+  // Alternative collection names (examples):
+  // return userType == 'homeowner' ? 'users_homeowners' : 'users_tradies';
+  // return userType == 'homeowner' ? 'clients' : 'contractors';
+  // return userType == 'homeowner' ? 'customers' : 'service_providers';
 }
