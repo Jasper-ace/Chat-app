@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../viewmodels/auth_viewmodel.dart';
+import '../viewmodels/firebase_auth_viewmodel.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -24,6 +24,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -39,11 +40,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authViewModelProvider);
-    final authViewModel = ref.read(authViewModelProvider.notifier);
+    final authState = ref.watch(firebaseAuthViewModelProvider);
+    final authViewModel = ref.read(firebaseAuthViewModelProvider.notifier);
 
     // Listen to auth state changes
-    ref.listen<AuthState>(authViewModelProvider, (previous, next) {
+    ref.listen<FirebaseAuthState>(firebaseAuthViewModelProvider, (
+      previous,
+      next,
+    ) {
       if (next.isAuthenticated) {
         context.go('/dashboard');
       }
@@ -101,10 +105,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 // First Name
                 TextFormField(
                   controller: _firstNameController,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'First Name *',
-                    prefixIcon: const Icon(Icons.person_outline),
-                    errorText: authState.fieldErrors?['first_name']?.first,
+                    prefixIcon: Icon(Icons.person_outline),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -118,10 +121,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 // Middle Name (optional)
                 TextFormField(
                   controller: _middleNameController,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Middle Name',
-                    prefixIcon: const Icon(Icons.person_outline),
-                    errorText: authState.fieldErrors?['middle_name']?.first,
+                    prefixIcon: Icon(Icons.person_outline),
                   ),
                 ),
                 const SizedBox(height: AppDimensions.spacing16),
@@ -129,10 +131,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 // Last Name
                 TextFormField(
                   controller: _lastNameController,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Last Name *',
-                    prefixIcon: const Icon(Icons.person_outline),
-                    errorText: authState.fieldErrors?['last_name']?.first,
+                    prefixIcon: Icon(Icons.person_outline),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -147,10 +148,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Email *',
-                    prefixIcon: const Icon(Icons.email_outlined),
-                    errorText: authState.fieldErrors?['email']?.first,
+                    prefixIcon: Icon(Icons.email_outlined),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -170,10 +170,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 TextFormField(
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Phone',
-                    prefixIcon: const Icon(Icons.phone_outlined),
-                    errorText: authState.fieldErrors?['phone']?.first,
+                    prefixIcon: Icon(Icons.phone_outlined),
                   ),
                 ),
                 const SizedBox(height: AppDimensions.spacing16),
@@ -197,7 +196,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         });
                       },
                     ),
-                    errorText: authState.fieldErrors?['password']?.first,
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -230,8 +228,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         });
                       },
                     ),
-                    errorText:
-                        authState.fieldErrors?['password_confirmation']?.first,
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -249,29 +245,48 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 SizedBox(
                   height: AppDimensions.buttonHeight,
                   child: ElevatedButton(
-                    onPressed: authState.isLoading
+                    onPressed: (authState.isLoading || _isSubmitting)
                         ? null
                         : () async {
-                            if (_formKey.currentState!.validate()) {
-                              authViewModel.clearError();
-                              await authViewModel.register(
-                                firstName: _firstNameController.text.trim(),
-                                middleName:
-                                    _middleNameController.text.trim().isEmpty
-                                    ? null
-                                    : _middleNameController.text.trim(),
-                                lastName: _lastNameController.text.trim(),
-                                email: _emailController.text.trim(),
-                                password: _passwordController.text,
-                                passwordConfirmation:
-                                    _confirmPasswordController.text,
-                                phone: _phoneController.text.trim().isEmpty
-                                    ? null
-                                    : _phoneController.text.trim(),
-                              );
+                            if (_formKey.currentState!.validate() &&
+                                !_isSubmitting) {
+                              setState(() {
+                                _isSubmitting = true;
+                              });
+
+                              try {
+                                authViewModel.clearError();
+
+                                // Combine first, middle, and last name
+                                String fullName = _firstNameController.text
+                                    .trim();
+                                if (_middleNameController.text
+                                    .trim()
+                                    .isNotEmpty) {
+                                  fullName +=
+                                      ' ${_middleNameController.text.trim()}';
+                                }
+                                fullName +=
+                                    ' ${_lastNameController.text.trim()}';
+
+                                await authViewModel.register(
+                                  email: _emailController.text.trim(),
+                                  password: _passwordController.text,
+                                  name: fullName,
+                                  phone: _phoneController.text.trim().isEmpty
+                                      ? null
+                                      : _phoneController.text.trim(),
+                                );
+                              } finally {
+                                if (mounted) {
+                                  setState(() {
+                                    _isSubmitting = false;
+                                  });
+                                }
+                              }
                             }
                           },
-                    child: authState.isLoading
+                    child: (authState.isLoading || _isSubmitting)
                         ? const SizedBox(
                             width: 20,
                             height: 20,

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:fixo_chat/fixo_chat.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../shared/services/auth_service.dart';
+import '../../../shared/helpers/chat_helpers.dart';
 
 class TradieAuthService {
   final AuthService _authService = AuthService();

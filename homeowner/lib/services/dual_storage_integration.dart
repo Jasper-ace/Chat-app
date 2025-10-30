@@ -1,5 +1,5 @@
-import 'package:fixo_chat/services/dual_storage_service.dart';
-import 'package:fixo_chat/services/auth_service.dart';
+import '../shared/services/dual_storage_service.dart';
+import '../shared/services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'api_service.dart';
 

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:fixo_chat/services/chat_service.dart';
+import '../../../shared/services/chat_service.dart';
 import '../../../services/dual_storage_integration.dart';
 
 class EnhancedChatWidget extends StatefulWidget {

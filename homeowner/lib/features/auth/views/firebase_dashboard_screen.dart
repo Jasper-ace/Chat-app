@@ -79,7 +79,7 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
+                          color: AppColors.primary.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
@@ -119,10 +119,8 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                     subtitle: 'Chat with tradies',
                     color: Colors.blueAccent,
                     onTap: () {
-                      authViewModel.openChat(
-                        context,
-                        1,
-                      ); // TODO: Replace with actual user ID
+                      final userId = authState.userData?.autoId ?? 1;
+                      authViewModel.openChat(context, userId);
                     },
                   ),
                   _buildActionCard(
@@ -197,7 +195,7 @@ class FirebaseDashboardScreen extends ConsumerWidget {
               Container(
                 padding: const EdgeInsets.all(AppDimensions.paddingMedium),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(
                     AppDimensions.radiusLarge,
                   ),

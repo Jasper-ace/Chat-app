@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:fixo_chat/fixo_chat.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../shared/models/user_model.dart';
 import '../services/tradie_auth_service.dart';
 
 // Firebase Auth state
@@ -96,6 +98,74 @@ class FirebaseAuthViewModel extends StateNotifier<FirebaseAuthState> {
         return false;
       }
     } catch (e) {
+      // Check if this is the known type casting error but user was actually created
+      if (e.toString().contains('PigeonUserDetails') ||
+          e.toString().contains('List<Object?>')) {
+        print(
+          '⚠️ Known Firebase Auth plugin error, checking if user was created...',
+        );
+
+        // Wait a moment for Firebase to process
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        // Check if user was actually created despite the error
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser != null && currentUser.email == email) {
+          print('✅ User was created successfully despite plugin error');
+
+          // Try to create the Firestore document manually
+          try {
+            // Get proper auto-increment ID
+            final homeownersSnapshot = await FirebaseFirestore.instance
+                .collection('homeowners')
+                .get();
+            final tradiesSnapshot = await FirebaseFirestore.instance
+                .collection('tradies')
+                .get();
+
+            int highestId = 0;
+            for (final doc in homeownersSnapshot.docs) {
+              final data = doc.data();
+              final id = data['id'] as int? ?? 0;
+              if (id > highestId) highestId = id;
+            }
+            for (final doc in tradiesSnapshot.docs) {
+              final data = doc.data();
+              final id = data['id'] as int? ?? 0;
+              if (id > highestId) highestId = id;
+            }
+            final nextId = highestId + 1;
+
+            await FirebaseFirestore.instance
+                .collection('tradies')
+                .doc(currentUser.uid)
+                .set({
+                  'id': nextId,
+                  'autoId': nextId, // Add autoId field for thread service
+                  'name': name,
+                  'email': email,
+                  'userType': 'tradie',
+                  'tradeType': tradeType,
+                  'phone': phone ?? '',
+                  'bio': '',
+                  'createdAt': FieldValue.serverTimestamp(),
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+
+            print('✅ Firestore document created manually');
+            state = state.copyWith(isLoading: false);
+            return true;
+          } catch (firestoreError) {
+            print('❌ Failed to create Firestore document: $firestoreError');
+            state = state.copyWith(
+              isLoading: false,
+              error: 'User created but profile setup failed',
+            );
+            return false;
+          }
+        }
+      }
+
       state = state.copyWith(isLoading: false, error: e.toString());
       return false;
     }

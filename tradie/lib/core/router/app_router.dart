@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/views/firebase_login_screen.dart';
-import '../../features/auth/views/firebase_register_screen.dart';
+import '../../features/auth/views/register_screen.dart';
 import '../../features/auth/views/firebase_dashboard_screen.dart';
 import '../../features/auth/viewmodels/firebase_auth_viewmodel.dart';
 
@@ -34,7 +34,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/register',
-        builder: (context, state) => const FirebaseRegisterScreen(),
+        builder: (context, state) => const RegisterScreen(),
       ),
       GoRoute(
         path: '/dashboard',

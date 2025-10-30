@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../viewmodels/auth_viewmodel.dart';
+import '../viewmodels/firebase_auth_viewmodel.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -28,11 +28,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authViewModelProvider);
-    final authViewModel = ref.read(authViewModelProvider.notifier);
+    final authState = ref.watch(firebaseAuthViewModelProvider);
+    final authViewModel = ref.read(firebaseAuthViewModelProvider.notifier);
 
     // Listen to auth state changes
-    ref.listen<AuthState>(authViewModelProvider, (previous, next) {
+    ref.listen<FirebaseAuthState>(firebaseAuthViewModelProvider, (
+      previous,
+      next,
+    ) {
       if (next.isAuthenticated) {
         context.go('/dashboard');
       }
@@ -87,10 +90,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Email',
-                    prefixIcon: const Icon(Icons.email_outlined),
-                    errorText: authState.fieldErrors?['email']?.first,
+                    prefixIcon: Icon(Icons.email_outlined),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -125,7 +127,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         });
                       },
                     ),
-                    errorText: authState.fieldErrors?['password']?.first,
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -146,8 +147,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             if (_formKey.currentState!.validate()) {
                               authViewModel.clearError();
                               await authViewModel.login(
-                                _emailController.text.trim(),
-                                _passwordController.text,
+                                email: _emailController.text.trim(),
+                                password: _passwordController.text,
                               );
                             }
                           },
