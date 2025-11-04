@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/chat_service.dart';
 import '../services/conversation_state_service.dart';
-import '../services/unified_thread_service.dart';
+
 import '../models/user_model.dart';
-import '../widgets/thread_cleanup_widget.dart';
+
 import 'chat_screen.dart';
 import 'settings/help_support_screen.dart';
 
@@ -23,9 +23,8 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final ChatService _chatService = ChatService();
-  final UnifiedThreadService _threadService = UnifiedThreadService();
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -42,69 +41,142 @@ class _ChatListScreenState extends State<ChatListScreen>
         _searchQuery = _searchController.text.toLowerCase();
       });
     });
+
+    // Add lifecycle observer for smart refresh
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     _tabController.dispose();
     super.dispose();
   }
 
-  // Preferences are now loaded via stream in build method
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Refresh the chat list when app resumes
+      if (mounted) {
+        setState(() {
+          // This will trigger a rebuild and refresh the FutureBuilders
+        });
+      }
+    }
+  }
 
   // Stream for real-time user preferences updates
   Stream<Map<String, dynamic>> _getUserPreferencesStream() {
     return ConversationStateService.getUserPreferencesStream();
   }
 
-  // Get unread message count for a user using unified thread service
-  Future<int> _getUnreadMessageCount(UserModel user) async {
-    try {
-      if (user.autoId == null) {
-        print('   ⚠️ User autoId is null for unread count, returning 0');
-        return 0;
+  // Get unread message count stream for real-time updates
+  Stream<int> _getUnreadMessageCountStream(UserModel user) async* {
+    if (user.autoId == null) {
+      yield 0;
+      return;
+    }
+
+    // Determine tradie and homeowner IDs
+    int tradieId, homeownerId;
+    if (widget.currentUserType == 'tradie') {
+      tradieId = widget.currentUserId;
+      homeownerId = user.autoId!;
+    } else {
+      tradieId = user.autoId!;
+      homeownerId = widget.currentUserId;
+    }
+
+    // Listen to thread changes
+    await for (final threadQuery
+        in FirebaseFirestore.instance
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield 0;
+        continue;
       }
 
-      final otherUserId = user.autoId!;
-      final otherUserType = widget.currentUserType == 'homeowner'
-          ? 'tradie'
-          : 'homeowner';
+      final threadDoc = threadQuery.docs.first;
 
-      return await _threadService.getUnreadMessageCount(
-        currentUserId: widget.currentUserId,
-        currentUserType: widget.currentUserType,
-        otherUserId: otherUserId,
-        otherUserType: otherUserType,
-      );
-    } catch (e) {
-      print('   ❌ Error getting unread count: $e');
-      return 0;
+      // Listen to unread messages count
+      await for (final messagesQuery
+          in FirebaseFirestore.instance
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .where('sender_id', isNotEqualTo: widget.currentUserId)
+              .where('read', isEqualTo: false)
+              .snapshots()) {
+        yield messagesQuery.docs.length;
+        break; // Only yield once per thread update
+      }
     }
   }
 
-  // Get last message for a user using unified thread service
-  Future<Map<String, dynamic>?> _getLastMessage(UserModel user) async {
-    try {
-      if (user.autoId == null) {
-        print('   ⚠️ User autoId is null for last message, returning null');
-        return null;
+  // Get last message stream for real-time updates
+  Stream<Map<String, dynamic>?> _getLastMessageStream(UserModel user) async* {
+    if (user.autoId == null) {
+      yield null;
+      return;
+    }
+
+    // Determine tradie and homeowner IDs
+    int tradieId, homeownerId;
+    if (widget.currentUserType == 'tradie') {
+      tradieId = widget.currentUserId;
+      homeownerId = user.autoId!;
+    } else {
+      tradieId = user.autoId!;
+      homeownerId = widget.currentUserId;
+    }
+
+    // Listen to thread changes
+    await for (final threadQuery
+        in FirebaseFirestore.instance
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield null;
+        continue;
       }
 
-      final otherUserId = user.autoId!;
-      final otherUserType = widget.currentUserType == 'homeowner'
-          ? 'tradie'
-          : 'homeowner';
+      final threadDoc = threadQuery.docs.first;
 
-      return await _threadService.getLastMessage(
-        currentUserId: widget.currentUserId,
-        currentUserType: widget.currentUserType,
-        otherUserId: otherUserId,
-        otherUserType: otherUserType,
-      );
-    } catch (e) {
-      print('   ❌ Error getting last message: $e');
-      return null;
+      // Listen to messages in this thread
+      await for (final messagesQuery
+          in FirebaseFirestore.instance
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .orderBy('date', descending: true)
+              .limit(1)
+              .snapshots()) {
+        if (messagesQuery.docs.isEmpty) {
+          final threadData = threadDoc.data();
+          yield {
+            'content': threadData['last_message'] ?? '',
+            'senderName': '',
+            'timestamp': threadData['last_message_time'],
+          };
+        } else {
+          final lastMessage = messagesQuery.docs.first.data();
+          yield {
+            'content': lastMessage['content'] ?? '',
+            'senderName': '',
+            'timestamp': lastMessage['date'],
+          };
+        }
+        break; // Only yield once per thread update
+      }
     }
   }
 
@@ -153,24 +225,6 @@ class _ChatListScreenState extends State<ChatListScreen>
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.cleaning_services),
-            tooltip: 'Fix Duplicate Threads',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ThreadCleanupWidget(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: () {
-              _showDebugInfo();
-            },
-          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -352,7 +406,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                     for (int i = 0; i < users.length; i++) {
                       final user = users[i];
                       print(
-                        '   User $i: ${user.name} (ID: ${user.id}, autoId: ${user.autoId}, type: ${user.userType})',
+                        '   User $i: ${user.name} (ID: ${user.id}, autoId: ${user.autoId}, type: ${user.userType})',
                       );
                     }
 
@@ -361,7 +415,7 @@ class _ChatListScreenState extends State<ChatListScreen>
 
                     // Sort users by name for now (pinning will be handled in UI)
                     users.sort((a, b) => a.name.compareTo(b.name));
-                    print('   Users sorted by name');
+                    print('   Users sorted by name');
 
                     if (users.isEmpty) {
                       return Center(
@@ -405,15 +459,10 @@ class _ChatListScreenState extends State<ChatListScreen>
                       itemBuilder: (context, index) {
                         try {
                           final user = users[index];
-                          print(
-                            '🔍 DEBUG: Building list item $index for user ${user.name}',
-                          );
+
                           // Pass userPreferences to _buildUserTile
                           return _buildUserTile(user, userPreferences);
                         } catch (e) {
-                          print(
-                            '❌ ERROR: Failed to build user tile at index $index: $e',
-                          );
                           return Card(
                             margin: const EdgeInsets.symmetric(
                               horizontal: 16,
@@ -443,9 +492,8 @@ class _ChatListScreenState extends State<ChatListScreen>
 
   // Build user tile with last message
   Widget _buildUserTile(UserModel user, Map<String, dynamic> userPreferences) {
-    print('🔍 DEBUG: Building tile for user ${user.name} (ID: ${user.id})');
     final isBlocked = _isUserBlocked(user.id, userPreferences);
-    print('   Is blocked: $isBlocked');
+    print('   Is blocked: $isBlocked');
 
     return FutureBuilder<Map<String, bool>>(
       future: _getConversationStates(user),
@@ -514,10 +562,10 @@ class _ChatListScreenState extends State<ChatListScreen>
         'isUnread': results[3],
       };
 
-      print('   Conversation states: $states');
+      print('   Conversation states: $states');
       return states;
     } catch (e) {
-      print('   ❌ Error getting conversation states: $e');
+      print('   ❌ Error getting conversation states: $e');
       return {
         'isPinned': false,
         'isArchived': false,
@@ -534,7 +582,7 @@ class _ChatListScreenState extends State<ChatListScreen>
     bool isMuted,
     bool isUnread,
     bool isBlocked,
-    Map<String, dynamic> userPreferences, // <-- ADDED
+    Map<String, dynamic> userPreferences,
   ) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -555,8 +603,8 @@ class _ChatListScreenState extends State<ChatListScreen>
               ),
             ),
             // Unread count badge
-            FutureBuilder<int>(
-              future: _getUnreadMessageCount(user),
+            StreamBuilder<int>(
+              stream: _getUnreadMessageCountStream(user),
               builder: (context, snapshot) {
                 final unreadCount = snapshot.data ?? 0;
                 if (unreadCount > 0) {
@@ -618,8 +666,8 @@ class _ChatListScreenState extends State<ChatListScreen>
                 user.tradeType!,
                 style: TextStyle(color: Colors.grey[600], fontSize: 12),
               ),
-            FutureBuilder<Map<String, dynamic>?>(
-              future: _getLastMessage(user),
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: _getLastMessageStream(user),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Text(
@@ -631,8 +679,6 @@ class _ChatListScreenState extends State<ChatListScreen>
                 if (snapshot.hasData && snapshot.data != null) {
                   final lastMessage = snapshot.data!;
                   final content = lastMessage['content'] as String? ?? '';
-                  final senderName =
-                      lastMessage['senderName'] as String? ?? 'Unknown';
                   final timestamp = lastMessage['timestamp'];
 
                   return Row(
@@ -640,7 +686,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                       Expanded(
                         child: Text(
                           content.isNotEmpty
-                              ? '$senderName: $content'
+                              ? 'Last message: $content'
                               : 'No messages yet',
                           style: TextStyle(
                             color: Colors.grey[500],
@@ -679,8 +725,8 @@ class _ChatListScreenState extends State<ChatListScreen>
                 }
 
                 // No messages yet - check for unread count
-                return FutureBuilder<int>(
-                  future: _getUnreadMessageCount(user),
+                return StreamBuilder<int>(
+                  stream: _getUnreadMessageCountStream(user),
                   builder: (context, unreadSnapshot) {
                     final unreadCount = unreadSnapshot.data ?? 0;
 
@@ -755,17 +801,16 @@ class _ChatListScreenState extends State<ChatListScreen>
           color: isBlocked ? Colors.grey[400] : Theme.of(context).primaryColor,
         ),
         onTap: () {
-          print('🔍 DEBUG: User tile tapped');
-          print('   User ID: ${user.id}');
-          print('   User autoId: ${user.autoId}');
-          print('   User name: ${user.name}');
-          print('   User type: ${user.userType}');
-          print('   Is blocked: $isBlocked');
-          print('   Current user type: ${widget.currentUserType}');
-          print('   Current user ID: ${widget.currentUserId}');
+          print('   User ID: ${user.id}');
+          print('   User autoId: ${user.autoId}');
+          print('   User name: ${user.name}');
+          print('   User type: ${user.userType}');
+          print('   Is blocked: $isBlocked');
+          print('   Current user type: ${widget.currentUserType}');
+          print('   Current user ID: ${widget.currentUserId}');
 
           if (isBlocked) {
-            print('   ❌ User is blocked, showing snackbar');
+            print('   ❌ User is blocked, showing snackbar');
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -774,16 +819,19 @@ class _ChatListScreenState extends State<ChatListScreen>
                 ),
               );
             }
-            return;
+            // Allow navigation to blocked users - they can still view the conversation
+            print(
+              '   ℹ️ User is blocked, but allowing navigation to conversation',
+            );
           }
 
           // Try to navigate regardless of autoId for debugging
           try {
-            print('   ✅ Attempting to navigate to chat screen');
+            print('   ✅ Attempting to navigate to chat screen');
 
             // Mark as read when opening chat (if autoId is available)
             if (user.autoId != null) {
-              print('   📝 Marking conversation as read');
+              print('   📝 Marking conversation as read');
               try {
                 final otherUserId =
                     user.autoId!; // Use autoId directly, not parse user.id
@@ -797,15 +845,15 @@ class _ChatListScreenState extends State<ChatListScreen>
                   otherUserId: otherUserId,
                   otherUserType: otherUserType,
                 );
-                print('   ✅ Conversation marked as read');
+                print('   ✅ Conversation marked as read');
               } catch (e) {
-                print('   ⚠️ Error marking as read: $e');
+                print('   ⚠️ Error marking as read: $e');
               }
             } else {
-              print('   ⚠️ autoId is null, skipping mark as read');
+              print('   ⚠️ autoId is null, skipping mark as read');
             }
 
-            print('   🚀 Navigating to ChatScreen');
+            print('   🚀 Navigating to ChatScreen');
             Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -817,10 +865,10 @@ class _ChatListScreenState extends State<ChatListScreen>
                   ),
                 )
                 .then((_) {
-                  print('   ↩️ Returned from ChatScreen');
+                  print('   ↩️ Returned from ChatScreen');
                 })
                 .catchError((error) {
-                  print('   ❌ Navigation error: $error');
+                  print('   ❌ Navigation error: $error');
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -831,7 +879,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                   }
                 });
           } catch (e) {
-            print('   ❌ Error in onTap: $e');
+            print('   ❌ Error in onTap: $e');
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -843,8 +891,6 @@ class _ChatListScreenState extends State<ChatListScreen>
           }
         },
         onLongPress: () {
-          print('🔍 DEBUG: Long press detected for user ${user.name}');
-          // PASS USER PREFERENCES HERE
           _showConversationOptions(context, user, userPreferences);
         },
       ),
@@ -859,7 +905,7 @@ class _ChatListScreenState extends State<ChatListScreen>
       );
 
       if (user.autoId == null) {
-        print('   ⚠️ User autoId is null, returning false');
+        print('   ⚠️ User autoId is null, returning false');
         return false;
       }
 
@@ -868,8 +914,8 @@ class _ChatListScreenState extends State<ChatListScreen>
           ? 'tradie'
           : 'homeowner';
 
-      print('   Using otherUserId: $otherUserId');
-      print('   Determined otherUserType: $otherUserType');
+      print('   Using otherUserId: $otherUserId');
+      print('   Determined otherUserType: $otherUserType');
 
       final result = await ConversationStateService.isConversationPinned(
         currentUserId: widget.currentUserId,
@@ -878,10 +924,10 @@ class _ChatListScreenState extends State<ChatListScreen>
         otherUserType: otherUserType,
       );
 
-      print('   Is pinned result: $result');
+      print('   Is pinned result: $result');
       return result;
     } catch (e) {
-      print('   ❌ Error checking pinned status: $e');
+      print('   ❌ Error checking pinned status: $e');
       return false;
     }
   }
@@ -889,7 +935,7 @@ class _ChatListScreenState extends State<ChatListScreen>
   Future<bool> _isConversationArchived(UserModel user) async {
     try {
       if (user.autoId == null) {
-        print('   ⚠️ User autoId is null for archived check, returning false');
+        print('   ⚠️ User autoId is null for archived check, returning false');
         return false;
       }
 
@@ -905,7 +951,7 @@ class _ChatListScreenState extends State<ChatListScreen>
         otherUserType: otherUserType,
       );
     } catch (e) {
-      print('   ❌ Error checking archived status: $e');
+      print('   ❌ Error checking archived status: $e');
       return false;
     }
   }
@@ -913,7 +959,7 @@ class _ChatListScreenState extends State<ChatListScreen>
   Future<bool> _isConversationMuted(UserModel user) async {
     try {
       if (user.autoId == null) {
-        print('   ⚠️ User autoId is null for muted check, returning false');
+        print('   ⚠️ User autoId is null for muted check, returning false');
         return false;
       }
 
@@ -929,7 +975,7 @@ class _ChatListScreenState extends State<ChatListScreen>
         otherUserType: otherUserType,
       );
     } catch (e) {
-      print('   ❌ Error checking muted status: $e');
+      print('   ❌ Error checking muted status: $e');
       return false;
     }
   }
@@ -937,7 +983,7 @@ class _ChatListScreenState extends State<ChatListScreen>
   Future<bool> _isConversationUnread(UserModel user) async {
     try {
       if (user.autoId == null) {
-        print('   ⚠️ User autoId is null for unread check, returning false');
+        print('   ⚠️ User autoId is null for unread check, returning false');
         return false;
       }
 
@@ -953,7 +999,7 @@ class _ChatListScreenState extends State<ChatListScreen>
         otherUserType: otherUserType,
       );
     } catch (e) {
-      print('   ❌ Error checking unread status: $e');
+      print('   ❌ Error checking unread status: $e');
       return false;
     }
   }
@@ -968,10 +1014,10 @@ class _ChatListScreenState extends State<ChatListScreen>
   void _showConversationOptions(
     BuildContext context,
     UserModel user,
-    Map<String, dynamic> userPreferences, // <-- MODIFIED TO RECEIVE PREFERENCES
+    Map<String, dynamic> userPreferences,
   ) {
     // Use the passed preferences for the initial blocked state
-    final isBlocked = _isUserBlocked(user.id, userPreferences); // <-- FIXED
+    final isBlocked = _isUserBlocked(user.id, userPreferences);
 
     // Get conversation states asynchronously
     showModalBottomSheet(
@@ -1052,12 +1098,11 @@ class _ChatListScreenState extends State<ChatListScreen>
                   icon: isPinned ? Icons.push_pin : Icons.push_pin,
                   title: isPinned ? 'Unpin' : 'Pin',
                   onTap: () async {
-                    print('🔍 DEBUG: Pin/Unpin button tapped for ${user.name}');
-                    print('   Current state: isPinned = $isPinned');
+                    print('   Current state: isPinned = $isPinned');
                     Navigator.pop(context);
                     try {
                       if (user.autoId == null) {
-                        print('   ❌ User autoId is null, cannot pin/unpin');
+                        print('   ❌ User autoId is null, cannot pin/unpin');
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -1074,11 +1119,11 @@ class _ChatListScreenState extends State<ChatListScreen>
                           ? 'tradie'
                           : 'homeowner';
 
-                      print('   Using otherUserId: $otherUserId');
-                      print('   Determined otherUserType: $otherUserType');
+                      print('   Using otherUserId: $otherUserId');
+                      print('   Determined otherUserType: $otherUserType');
 
                       if (isPinned) {
-                        print('   Attempting to unpin conversation');
+                        print('   Attempting to unpin conversation');
                         await ConversationStateService.unpinConversation(
                           currentUserId: widget.currentUserId,
                           currentUserType: widget.currentUserType,
@@ -1125,7 +1170,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                     try {
                       if (user.autoId == null) {
                         print(
-                          '   ❌ User autoId is null, cannot archive/unarchive',
+                          '   ❌ User autoId is null, cannot archive/unarchive',
                         );
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1184,13 +1229,8 @@ class _ChatListScreenState extends State<ChatListScreen>
 
                 _buildOptionTile(
                   icon: isBlocked ? Icons.block : Icons.block,
-                  title: isBlocked
-                      ? 'Unblock'
-                      : 'Block', // The title is now correctly dynamic
-                  color: isBlocked
-                      ? Colors.green
-                      : Colors
-                            .red, // Changed color for Unblock to green for better contrast/meaning
+                  title: isBlocked ? 'Unblock' : 'Block',
+                  color: isBlocked ? Colors.green : Colors.red,
                   onTap: () async {
                     Navigator.pop(context);
 
@@ -1262,7 +1302,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                     Navigator.pop(context);
                     try {
                       if (user.autoId == null) {
-                        print('   ❌ User autoId is null, cannot mute/unmute');
+                        print('   ❌ User autoId is null, cannot mute/unmute');
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -1326,7 +1366,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                     try {
                       if (user.autoId == null) {
                         print(
-                          '   ❌ User autoId is null, cannot mark as unread',
+                          '   ❌ User autoId is null, cannot mark as unread',
                         );
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1373,43 +1413,6 @@ class _ChatListScreenState extends State<ChatListScreen>
             ),
           );
         },
-      ),
-    );
-  }
-
-  void _showDebugInfo() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Debug Information'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Current User Type: ${widget.currentUserType}'),
-              Text('Current User ID: ${widget.currentUserId}'),
-              Text('Show Recent Messages: $_showRecentMessages'),
-              Text('Search Query: "$_searchQuery"'),
-              const SizedBox(height: 16),
-              const Text('Check console for detailed debug logs.'),
-              const SizedBox(height: 16),
-              const Text(
-                'Test Actions:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const Text('1. Tap a user tile to navigate'),
-              const Text('2. Long press for options'),
-              const Text('3. Try pin/unpin from options'),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
       ),
     );
   }

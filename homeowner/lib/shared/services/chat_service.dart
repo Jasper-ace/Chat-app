@@ -796,20 +796,72 @@ class ChatService {
   // Check if current user is blocked by another user
   Future<bool> _isBlockedByUser(String userId) async {
     try {
-      final profileDoc = await _firestore
-          .collection('userProfiles')
-          .doc(userId)
-          .get();
+      User? currentUser = _auth.currentUser;
+      if (currentUser == null) return false;
 
-      if (profileDoc.exists) {
-        final data = profileDoc.data() as Map<String, dynamic>;
-        final blockedUsers = List<String>.from(data['blockedUsers'] ?? []);
-        User? currentUser = _auth.currentUser;
-        return currentUser != null && blockedUsers.contains(currentUser.uid);
+      print('🔍 HOMEOWNER: Checking if blocked by user: $userId');
+
+      // 1. Check userProfiles collection (homeowner blocking system)
+      try {
+        final profileDoc = await _firestore
+            .collection('userProfiles')
+            .doc(userId)
+            .get();
+
+        if (profileDoc.exists) {
+          final data = profileDoc.data() as Map<String, dynamic>;
+          final blockedUsers = List<String>.from(data['blockedUsers'] ?? []);
+          if (blockedUsers.contains(currentUser.uid)) {
+            print('✅ HOMEOWNER: Found blocked in userProfiles');
+            return true;
+          }
+        }
+      } catch (e) {
+        print('⚠️ HOMEOWNER: Error checking userProfiles: $e');
       }
+
+      // 2. Check userPreferences collection (tradie blocking system)
+      try {
+        final prefsDoc = await _firestore
+            .collection('userPreferences')
+            .doc(userId)
+            .get();
+
+        if (prefsDoc.exists) {
+          final data = prefsDoc.data() as Map<String, dynamic>;
+          final blockedUsers = List<String>.from(data['blockedUsers'] ?? []);
+          if (blockedUsers.contains(currentUser.uid)) {
+            print('✅ HOMEOWNER: Found blocked in userPreferences');
+            return true;
+          }
+        }
+      } catch (e) {
+        print('⚠️ HOMEOWNER: Error checking userPreferences: $e');
+      }
+
+      // 3. Check blocked_users collection (tradie blocking system)
+      try {
+        final blockedUserDoc = await _firestore
+            .collection('blocked_users')
+            .doc('${userId}_${currentUser.uid}')
+            .get();
+
+        if (blockedUserDoc.exists) {
+          final data = blockedUserDoc.data() as Map<String, dynamic>;
+          final isActive = data['is_active'] ?? false;
+          if (isActive) {
+            print('✅ HOMEOWNER: Found blocked in blocked_users collection');
+            return true;
+          }
+        }
+      } catch (e) {
+        print('⚠️ HOMEOWNER: Error checking blocked_users: $e');
+      }
+
+      print('❌ HOMEOWNER: Not blocked by user $userId');
       return false;
     } catch (e) {
-      print('Check if blocked by user error: $e');
+      print('❌ HOMEOWNER: Check if blocked by user error: $e');
       return false;
     }
   }

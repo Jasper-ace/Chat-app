@@ -273,6 +273,53 @@ class UnifiedThreadService {
 
   // --- Data Retrieval Operations ---
 
+  /// Get unread message count stream for real-time updates
+  Stream<int> getUnreadMessageCountStream({
+    required int currentUserId,
+    required String currentUserType,
+    required int otherUserId,
+    required String otherUserType,
+  }) async* {
+    // 1. Determine IDs consistently
+    int tradieId, homeownerId;
+    if (currentUserType == 'tradie') {
+      tradieId = currentUserId;
+      homeownerId = otherUserId;
+    } else {
+      tradieId = otherUserId;
+      homeownerId = currentUserId;
+    }
+
+    // 2. Listen to thread changes
+    await for (final threadQuery
+        in _firestore
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield 0;
+        continue;
+      }
+
+      final threadDoc = threadQuery.docs.first;
+
+      // 3. Listen to unread messages in this thread
+      await for (final messagesQuery
+          in _firestore
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .where('sender_id', isNotEqualTo: currentUserId)
+              .where('status', whereIn: ['sent', 'delivered'])
+              .snapshots()) {
+        yield messagesQuery.docs.length;
+        break; // Only yield once per thread update
+      }
+    }
+  }
+
   /// Get unread message count
   Future<int> getUnreadMessageCount({
     required int currentUserId,
@@ -316,6 +363,62 @@ class UnifiedThreadService {
     } catch (e) {
       print('   ❌ Error getting unread count: $e');
       return 0;
+    }
+  }
+
+  /// Get last message stream for real-time updates
+  Stream<Map<String, dynamic>?> getLastMessageStream({
+    required int currentUserId,
+    required String currentUserType,
+    required int otherUserId,
+    required String otherUserType,
+  }) async* {
+    // 1. Determine IDs consistently
+    int tradieId, homeownerId;
+    if (currentUserType == 'tradie') {
+      tradieId = currentUserId;
+      homeownerId = otherUserId;
+    } else {
+      tradieId = otherUserId;
+      homeownerId = currentUserId;
+    }
+
+    // 2. Listen to thread changes
+    await for (final threadQuery
+        in _firestore
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield null;
+        continue;
+      }
+
+      final threadDoc = threadQuery.docs.first;
+
+      // 3. Listen to latest message in this thread
+      await for (final messagesQuery
+          in _firestore
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .orderBy('timestamp', descending: true)
+              .limit(1)
+              .snapshots()) {
+        if (messagesQuery.docs.isEmpty) {
+          yield null;
+        } else {
+          final lastMessage = messagesQuery.docs.first.data();
+          yield {
+            'content': lastMessage['content'] ?? '',
+            'senderName': '',
+            'timestamp': lastMessage['timestamp'],
+          };
+        }
+        break; // Only yield once per thread update
+      }
     }
   }
 
@@ -369,32 +472,12 @@ class UnifiedThreadService {
       }
 
       final lastMessage = messagesQuery.docs.first.data();
-      final senderId = lastMessage['sender_id'] as int;
-      final senderType = lastMessage['sender_type'] as String;
+      // We only need the content, no sender info needed
 
-      // 4. Get sender name
-      String senderName = 'Unknown';
-      try {
-        final senderCollection = senderType == 'tradie'
-            ? 'tradies'
-            : 'homeowners';
-
-        final senderDoc = await _firestore
-            .collection(senderCollection)
-            .where('autoId', isEqualTo: senderId)
-            .limit(1)
-            .get();
-
-        if (senderDoc.docs.isNotEmpty) {
-          senderName = senderDoc.docs.first.data()['name'] ?? 'Unknown';
-        }
-      } catch (e) {
-        // Use default name
-      }
-
+      // Simplified - just return content
       return {
         'content': lastMessage['content'] ?? '',
-        'senderName': senderName,
+        'senderName': '', // Not used anymore
         'timestamp': lastMessage['timestamp'],
       };
     } catch (e) {

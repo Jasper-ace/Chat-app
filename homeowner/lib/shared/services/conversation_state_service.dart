@@ -166,6 +166,11 @@ class ConversationStateService {
       final currentUser = _auth.currentUser;
       if (currentUser == null) throw Exception('User not authenticated');
 
+      print('🔒 HOMEOWNER: Starting blockUser operation');
+      print('   Current User UID: ${currentUser.uid}');
+      print('   Other User ID: $otherUserId');
+      print('   User Type: $userType');
+
       // Update all blocking storage locations for consistency
       final batch = _firestore.batch();
 
@@ -180,6 +185,7 @@ class ConversationStateService {
         'blocked_at': FieldValue.serverTimestamp(),
         'is_active': true,
       });
+      print('   Added to blocked_users collection');
 
       // 2. Add to userPreferences (for ConversationStateService)
       final prefsRef = await _getUserPreferencesRef();
@@ -187,6 +193,7 @@ class ConversationStateService {
         'blockedUsers': FieldValue.arrayUnion([otherUserId]),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      print('   Added to userPreferences');
 
       // 3. Add to userProfiles (for ChatService compatibility)
       final profileRef = _firestore
@@ -197,11 +204,14 @@ class ConversationStateService {
         'updatedAt': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+      print('   Added to userProfiles');
 
       // Execute all updates atomically
+      print('   Committing batch operation...');
       await batch.commit();
+      print('✅ HOMEOWNER: blockUser operation completed successfully');
     } catch (e) {
-      print('Error blocking user: $e');
+      print('❌ HOMEOWNER: Error blocking user: $e');
       rethrow;
     }
   }
@@ -493,34 +503,140 @@ class ConversationStateService {
   static Future<bool> isUserBlocked(String otherUserId) async {
     try {
       final currentUser = _auth.currentUser;
-      if (currentUser == null) return false;
+      if (currentUser == null) {
+        print('🔍 HOMEOWNER: isUserBlocked - No current user');
+        return false;
+      }
+
+      print('🔍 HOMEOWNER: isUserBlocked checking:');
+      print('   Current User UID: ${currentUser.uid}');
+      print('   Other User ID: $otherUserId');
 
       // Check multiple sources for blocking status
       // 1. Check userPreferences first (fastest)
       final prefs = await getUserPreferences();
       final blockedList = List<String>.from(prefs['blockedUsers'] ?? []);
-      if (blockedList.contains(otherUserId)) return true;
+      print('   userPreferences blockedUsers: $blockedList');
 
-      // 2. Check blocked_users collection as fallback
-      final blockedUserDoc = await _firestore
-          .collection('blocked_users')
-          .doc('${currentUser.uid}_$otherUserId')
-          .get();
-
-      if (blockedUserDoc.exists &&
-          (blockedUserDoc.data()?['is_active'] == true)) {
-        // Sync the blocking status to userPreferences for future fast access
-        final prefsRef = await _getUserPreferencesRef();
-        await prefsRef.set({
-          'blockedUsers': FieldValue.arrayUnion([otherUserId]),
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+      if (blockedList.contains(otherUserId)) {
+        print('   Found in userPreferences - user is blocked');
         return true;
       }
 
+      // 2. Check blocked_users collection as fallback
+      final blockedUserDocId = '${currentUser.uid}_$otherUserId';
+      print('   Checking blocked_users doc: $blockedUserDocId');
+
+      final blockedUserDoc = await _firestore
+          .collection('blocked_users')
+          .doc(blockedUserDocId)
+          .get();
+
+      if (blockedUserDoc.exists) {
+        final data = blockedUserDoc.data();
+        final isActive = data?['is_active'] == true;
+        print('   blocked_users doc exists, is_active: $isActive');
+
+        if (isActive) {
+          // Sync the blocking status to userPreferences for future fast access
+          final prefsRef = await _getUserPreferencesRef();
+          await prefsRef.set({
+            'blockedUsers': FieldValue.arrayUnion([otherUserId]),
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+          print('   Synced to userPreferences');
+          return true;
+        }
+      } else {
+        print('   blocked_users doc does not exist');
+      }
+
+      print('   isUserBlocked result: false');
       return false;
     } catch (e) {
-      print('Error checking if user is blocked: $e');
+      print('❌ HOMEOWNER: Error checking if user is blocked: $e');
+      return false;
+    }
+  }
+
+  /// Check if current user is blocked by another user
+  static Future<bool> isBlockedByUser(String otherUserId) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        print('🔍 HOMEOWNER: isBlockedByUser - No current user');
+        return false;
+      }
+
+      print('🔍 HOMEOWNER: isBlockedByUser checking:');
+      print('   Current User UID: ${currentUser.uid}');
+      print('   Other User ID: $otherUserId');
+
+      // Check if the other user has blocked the current user
+      // 1. Check blocked_users collection
+      final blockedUserDocId = '${otherUserId}_${currentUser.uid}';
+      print('   Checking blocked_users doc: $blockedUserDocId');
+
+      final blockedUserDoc = await _firestore
+          .collection('blocked_users')
+          .doc(blockedUserDocId)
+          .get();
+
+      if (blockedUserDoc.exists) {
+        final data = blockedUserDoc.data();
+        final isActive = data?['is_active'] == true;
+        print('   blocked_users doc exists, is_active: $isActive');
+        if (isActive) {
+          return true;
+        }
+      } else {
+        print('   blocked_users doc does not exist');
+      }
+
+      // 2. Check other user's userPreferences
+      print('   Checking userPreferences for: $otherUserId');
+      final otherUserPrefsDoc = await _firestore
+          .collection('userPreferences')
+          .doc(otherUserId)
+          .get();
+
+      if (otherUserPrefsDoc.exists) {
+        final data = otherUserPrefsDoc.data() as Map<String, dynamic>;
+        final blockedList = List<String>.from(data['blockedUsers'] ?? []);
+        print('   userPreferences blockedUsers: $blockedList');
+        final isBlocked = blockedList.contains(currentUser.uid);
+        if (isBlocked) {
+          print('   Found in userPreferences blockedUsers');
+          return true;
+        }
+      } else {
+        print('   userPreferences doc does not exist');
+      }
+
+      // 3. Check other user's userProfiles (for ChatService compatibility)
+      print('   Checking userProfiles for: $otherUserId');
+      final otherUserProfileDoc = await _firestore
+          .collection('userProfiles')
+          .doc(otherUserId)
+          .get();
+
+      if (otherUserProfileDoc.exists) {
+        final data = otherUserProfileDoc.data() as Map<String, dynamic>;
+        final blockedList = List<String>.from(data['blockedUsers'] ?? []);
+        print('   userProfiles blockedUsers: $blockedList');
+        final isBlocked = blockedList.contains(currentUser.uid);
+        if (isBlocked) {
+          print('   Found in userProfiles blockedUsers');
+          return true;
+        }
+      } else {
+        print('   userProfiles doc does not exist');
+      }
+
+      print('   isBlockedByUser result: false');
+      return false;
+    } catch (e) {
+      print('❌ HOMEOWNER: Error checking if blocked by user: $e');
       return false;
     }
   }

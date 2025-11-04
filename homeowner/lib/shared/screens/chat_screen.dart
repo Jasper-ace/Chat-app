@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -28,7 +29,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ChatService _chatService = ChatService();
   final UnifiedThreadService _threadService = UnifiedThreadService();
   final TextEditingController _messageController = TextEditingController();
@@ -37,14 +38,43 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _actualCurrentUserId;
   MessageModel? _replyToMessage;
   bool _isUserBlocked = false;
+  bool _isBlockedByUser = false;
+
+  // Cache the messages stream to prevent multiple calls
+  Stream<QuerySnapshot>? _cachedMessagesStream;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeCurrentUserId();
     _checkBlockStatus();
     _listenToBlockingStatus();
     _markConversationAsRead();
+
+    // Set up periodic blocking status checks
+    _setupPeriodicBlockingCheck();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      print('🔄 HOMEOWNER: App resumed, checking blocking status');
+      _checkBlockStatus();
+    }
+  }
+
+  void _setupPeriodicBlockingCheck() {
+    // Check blocking status every 30 seconds as a fallback
+    Timer.periodic(const Duration(seconds: 3600), (timer) {
+      if (mounted) {
+        print('🔄 HOMEOWNER: Periodic blocking status check');
+        _checkBlockStatus();
+      } else {
+        timer.cancel();
+      }
+    });
   }
 
   Future<void> _initializeCurrentUserId() async {
@@ -72,21 +102,57 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _checkBlockStatus() async {
     try {
+      print(
+        '🔍 HOMEOWNER: Checking block status for user: ${widget.otherUser.id}',
+      );
+
       final isBlocked = await ConversationStateService.isUserBlocked(
         widget.otherUser.id,
       );
+
+      final isBlockedByUser = await ConversationStateService.isBlockedByUser(
+        widget.otherUser.id,
+      );
+
+      print(
+        '🔍 HOMEOWNER: Block status results - isBlocked=$isBlocked, isBlockedByUser=$isBlockedByUser',
+      );
+
       if (mounted) {
+        final oldIsUserBlocked = _isUserBlocked;
+        final oldIsBlockedByUser = _isBlockedByUser;
+
         setState(() {
           _isUserBlocked = isBlocked;
+          _isBlockedByUser = isBlockedByUser;
         });
+
+        if (oldIsUserBlocked != isBlocked ||
+            oldIsBlockedByUser != isBlockedByUser) {
+          print(
+            '🔄 HOMEOWNER: Blocking status CHANGED - isUserBlocked=$_isUserBlocked, isBlockedByUser=$_isBlockedByUser',
+          );
+          print(
+            '   UI should now show: ${(_isUserBlocked || _isBlockedByUser) ? "BLOCKED WARNING" : "MESSAGE INPUT"}',
+          );
+
+          // Force UI refresh with a small delay to ensure state propagation
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (mounted) {
+              setState(() {});
+            }
+          });
+        }
       }
     } catch (e) {
-      print('Error checking block status: $e');
+      print('❌ HOMEOWNER: Error checking block status: $e');
     }
   }
 
   void _listenToBlockingStatus() {
-    // Listen to real-time blocking status changes
+    // Listen to real-time blocking status changes in both directions
+
+    // 1. Listen to current user's blocking preferences (when I block someone)
     ConversationStateService.getUserPreferencesStream()
         .listen((preferences) {
           if (mounted) {
@@ -95,26 +161,31 @@ class _ChatScreenState extends State<ChatScreen> {
             );
             final isBlocked = blockedUsers.contains(widget.otherUser.id);
 
-            // Only show a SnackBar if the status *changes* while we are in this screen
+            print('🔍 HOMEOWNER: Real-time listener - I blocked them');
+            print('   Blocked users list: $blockedUsers');
+            print('   Other user ID: ${widget.otherUser.id}');
+            print('   Is blocked: $isBlocked');
+            print('   Current _isUserBlocked: $_isUserBlocked');
+
             if (_isUserBlocked != isBlocked) {
+              print(
+                '🔄 HOMEOWNER: _isUserBlocked changed from $_isUserBlocked to $isBlocked',
+              );
               setState(() {
                 _isUserBlocked = isBlocked;
               });
 
-              // Show feedback when blocking status changes
               if (isBlocked) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('${widget.otherUser.name} has been blocked'),
+                    content: Text('You blocked ${widget.otherUser.name}'),
                     backgroundColor: Colors.orange,
                   ),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(
-                      '${widget.otherUser.name} has been unblocked',
-                    ),
+                    content: Text('You unblocked ${widget.otherUser.name}'),
                     backgroundColor: Colors.green,
                   ),
                 );
@@ -123,7 +194,132 @@ class _ChatScreenState extends State<ChatScreen> {
           }
         })
         .onError((error) {
-          print('Error listening to blocking status: $error');
+          print('❌ HOMEOWNER: Error listening to my blocking status: $error');
+        });
+
+    // 2. Listen to other user's blocking preferences (when they block me)
+    _listenToOtherUserBlockingStatus();
+
+    // 3. Listen to blocked_users collection for additional updates
+    _listenToBlockedUsersCollection();
+  }
+
+  void _listenToOtherUserBlockingStatus() {
+    // Listen to the other user's userPreferences to detect if they block me
+    FirebaseFirestore.instance
+        .collection('userPreferences')
+        .doc(widget.otherUser.id)
+        .snapshots()
+        .listen((snapshot) {
+          if (mounted && snapshot.exists) {
+            final data = snapshot.data() as Map<String, dynamic>;
+            final blockedUsers = List<String>.from(data['blockedUsers'] ?? []);
+
+            // Check if they blocked me
+            final currentUser = FirebaseAuth.instance.currentUser;
+            if (currentUser != null) {
+              final isBlockedByThem = blockedUsers.contains(currentUser.uid);
+
+              print('🔍 HOMEOWNER: Real-time listener - They blocked me');
+              print('   Other user blocked list: $blockedUsers');
+              print('   My UID: ${currentUser.uid}');
+              print('   Am I blocked by them: $isBlockedByThem');
+              print('   Current _isBlockedByUser: $_isBlockedByUser');
+
+              if (_isBlockedByUser != isBlockedByThem) {
+                print(
+                  '🔄 HOMEOWNER: _isBlockedByUser changed from $_isBlockedByUser to $isBlockedByThem',
+                );
+                setState(() {
+                  _isBlockedByUser = isBlockedByThem;
+                });
+
+                if (isBlockedByThem) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${widget.otherUser.name} blocked you'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('${widget.otherUser.name} unblocked you'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
+            }
+          }
+        })
+        .onError((error) {
+          print(
+            '❌ HOMEOWNER: Error listening to other user blocking status: $error',
+          );
+        });
+  }
+
+  void _listenToBlockedUsersCollection() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
+    // Listen to blocked_users collection for bidirectional updates
+    FirebaseFirestore.instance
+        .collection('blocked_users')
+        .where('blocker_id', isEqualTo: currentUser.uid)
+        .where('blocked_user_id', isEqualTo: widget.otherUser.id)
+        .snapshots()
+        .listen((snapshot) {
+          if (mounted) {
+            final isBlocked =
+                snapshot.docs.isNotEmpty &&
+                snapshot.docs.any((doc) => doc.data()['is_active'] == true);
+
+            print(
+              '🔍 HOMEOWNER: blocked_users collection - I blocked them: $isBlocked',
+            );
+
+            if (_isUserBlocked != isBlocked) {
+              setState(() {
+                _isUserBlocked = isBlocked;
+              });
+            }
+          }
+        })
+        .onError((error) {
+          print(
+            '❌ HOMEOWNER: Error listening to blocked_users collection: $error',
+          );
+        });
+
+    // Listen for when they block me
+    FirebaseFirestore.instance
+        .collection('blocked_users')
+        .where('blocker_id', isEqualTo: widget.otherUser.id)
+        .where('blocked_user_id', isEqualTo: currentUser.uid)
+        .snapshots()
+        .listen((snapshot) {
+          if (mounted) {
+            final isBlockedByThem =
+                snapshot.docs.isNotEmpty &&
+                snapshot.docs.any((doc) => doc.data()['is_active'] == true);
+
+            print(
+              '🔍 HOMEOWNER: blocked_users collection - They blocked me: $isBlockedByThem',
+            );
+
+            if (_isBlockedByUser != isBlockedByThem) {
+              setState(() {
+                _isBlockedByUser = isBlockedByThem;
+              });
+            }
+          }
+        })
+        .onError((error) {
+          print(
+            '❌ HOMEOWNER: Error listening to reverse blocked_users collection: $error',
+          );
         });
   }
 
@@ -174,32 +370,34 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Get messages stream with better error handling and reconnection
   Stream<QuerySnapshot> _getMessagesStream() {
-    if (widget.otherUser.autoId != null && currentUserIdAsInt != 0) {
-      print('🔍 HOMEOWNER: Getting messages stream');
-      print('   Current User ID: $currentUserIdAsInt');
-      print('   Other User ID: ${widget.otherUser.autoId}');
-      print('   Current User Type: ${widget.currentUserType}');
-      print('   Other User Type: ${widget.otherUser.userType}');
+    // Return cached stream if already created
+    if (_cachedMessagesStream != null) {
+      return _cachedMessagesStream!;
+    }
 
-      // Let the UnifiedThreadService find/create the correct thread
-      // DO NOT pass a custom threadId - let it use its own logic
-      return _threadService
+    if (widget.otherUser.autoId != null && currentUserIdAsInt != 0) {
+      print('🔍 HOMEOWNER: Creating messages stream (first time only)');
+
+      _cachedMessagesStream = _threadService
           .getMessages(
             currentUserId: currentUserIdAsInt,
             currentUserType: widget.currentUserType,
             otherUserId: widget.otherUser.autoId!,
             otherUserType: widget.otherUser.userType,
-            // Remove threadId parameter - let service handle it
           )
           .handleError((error) {
             print('❌ HOMEOWNER: Error in messages stream: $error');
           });
     } else {
-      print('⚠️ HOMEOWNER: Using fallback chat service (missing autoId)');
-      return _chatService.getMessages(widget.otherUser.id).handleError((error) {
-        print('❌ HOMEOWNER: Error in fallback messages stream: $error');
-      });
+      print('🔍 HOMEOWNER: Creating fallback messages stream');
+      _cachedMessagesStream = _chatService
+          .getMessages(widget.otherUser.id)
+          .handleError((error) {
+            print('❌ HOMEOWNER: Error in fallback messages stream: $error');
+          });
     }
+
+    return _cachedMessagesStream!;
   }
 
   /// Mark conversation as read when opening chat
@@ -226,38 +424,63 @@ class _ChatScreenState extends State<ChatScreen> {
     final message = _messageController.text.trim();
     if (message.isEmpty) return;
 
-    if (_isUserBlocked) {
+    // Quick blocking check using existing state (no await needed)
+    if (_isUserBlocked || _isBlockedByUser) {
+      print(
+        '🚫 HOMEOWNER: Message blocked - isUserBlocked=$_isUserBlocked, isBlockedByUser=$_isBlockedByUser',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _isUserBlocked
+                  ? 'You have blocked this user. Unblock them to send messages.'
+                  : 'This user has blocked you. You cannot send messages.',
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+
       return;
     }
 
     final messageToSend = message;
+    // Clear UI immediately for instant feedback
     _messageController.clear();
     _clearReply();
 
+    // Send message in background without blocking UI
+    _sendMessageInBackground(messageToSend);
+
+    // Scroll to bottom immediately for better UX
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  void _sendMessageInBackground(String messageToSend) async {
     try {
       if (widget.otherUser.autoId != null && currentUserIdAsInt != 0) {
         print('📤 HOMEOWNER: Sending message via unified thread service');
-        print('   Current User ID: $currentUserIdAsInt');
-        print('   Other User ID: ${widget.otherUser.autoId}');
-        print('   Current User Type: ${widget.currentUserType}');
-        print('   Other User Type: ${widget.otherUser.userType}');
-        print('   Message: "$messageToSend"');
 
-        // Let the UnifiedThreadService handle thread creation/finding
-        // DO NOT pass a custom threadId - let it use its own logic
         await _threadService.sendMessage(
           senderId: currentUserIdAsInt,
           senderType: widget.currentUserType,
           receiverId: widget.otherUser.autoId!,
           receiverType: widget.otherUser.userType,
           content: messageToSend,
-          // Remove threadId parameter - let service handle it
         );
 
         print('✅ HOMEOWNER: Message sent successfully');
       } else {
-        // Fallback for old system or missing autoId
-        print('📤 HOMEOWNER: Using fallback chat service (missing autoId)');
+        print('📤 HOMEOWNER: Using fallback chat service');
         await _chatService.sendMessage(
           receiverId: widget.otherUser.id,
           message: messageToSend,
@@ -266,28 +489,22 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         print('✅ HOMEOWNER: Fallback message sent');
       }
-
-      print('✅ Message sent successfully');
-
-      // Scroll to bottom after a short delay to allow message to appear
-      Future.delayed(const Duration(milliseconds: 100), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            0,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
     } catch (e) {
       print('❌ Error sending message: $e');
 
-      // If sending failed, restore the message to input
+      // Show error and restore message if sending failed
       if (mounted) {
         _messageController.text = messageToSend;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send message. Please try again.'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () => _sendMessageInBackground(messageToSend),
+            ),
+          ),
+        );
       }
     }
   }
@@ -343,10 +560,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   Text(
-                    _isUserBlocked ? 'Blocked' : 'Offline',
+                    (_isUserBlocked || _isBlockedByUser)
+                        ? 'Blocked'
+                        : 'Offline',
                     style: TextStyle(
                       fontSize: 14,
-                      color: _isUserBlocked
+                      color: (_isUserBlocked || _isBlockedByUser)
                           ? Colors.red[300]
                           : Colors.white.withOpacity(0.8),
                     ),
@@ -375,24 +594,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               stream: _getMessagesStream(),
               builder: (context, snapshot) {
-                // ... (Debug info omitted for brevity) ...
-
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text(
-                          'Loading messages...',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
                 if (snapshot.hasError) {
                   return Center(
                     child: Column(
@@ -432,11 +633,15 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 }
 
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(
+                if (!snapshot.hasData) {
+                  return const SizedBox.shrink(); // Show nothing while loading
+                }
+
+                if (snapshot.data!.docs.isEmpty) {
+                  return Center(
                     child: Text(
-                      'No messages yet. Start the conversation!',
-                      style: TextStyle(color: Colors.grey, fontSize: 16),
+                      'No messages yet',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 16),
                     ),
                   );
                 }
@@ -489,7 +694,9 @@ class _ChatScreenState extends State<ChatScreen> {
           if (!_isUserBlocked && _replyToMessage != null) _buildReplyPreview(),
 
           // Blocked user warning or message input
-          _isUserBlocked ? _buildBlockedUserWarning() : _buildMessageInput(),
+          (_isUserBlocked || _isBlockedByUser)
+              ? _buildBlockedUserWarning()
+              : _buildMessageInput(),
         ],
       ),
     );
@@ -519,7 +726,9 @@ class _ChatScreenState extends State<ChatScreen> {
               Flexible(
                 flex: 3,
                 child: GestureDetector(
-                  onLongPress: () => _showMessageOptions(message, isMe),
+                  onLongPress: _isUserBlocked
+                      ? null
+                      : () => _showMessageOptions(message, isMe),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -544,13 +753,39 @@ class _ChatScreenState extends State<ChatScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // TODO: Reply functionality can be added later if needed
-                        // For now, just show the main message content
-                        Text(
-                          message.content,
-                          style: TextStyle(
-                            color: isMe ? Colors.white : Colors.black87,
-                            fontSize: 16,
-                          ),
+                        // Main message content with unsent handling
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              message.isUnsent
+                                  ? 'This message was unsent'
+                                  : message.content,
+                              style: TextStyle(
+                                color: message.isUnsent
+                                    ? (isMe ? Colors.white70 : Colors.grey[600])
+                                    : (isMe ? Colors.white : Colors.black87),
+                                fontSize: 16,
+                                fontStyle: message.isUnsent
+                                    ? FontStyle.italic
+                                    : FontStyle.normal,
+                              ),
+                            ),
+                            if (message.isEdited && !message.isUnsent)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  'edited',
+                                  style: TextStyle(
+                                    color: isMe
+                                        ? Colors.white60
+                                        : Colors.grey[500],
+                                    fontSize: 12,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ],
                     ),
@@ -608,7 +843,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _showChatOptions() {
+  void _showChatOptions() async {
+    // Force check blocking status before showing menu
+    await _checkBlockStatus();
+
+    // Give a moment for state to update
+    await Future.delayed(const Duration(milliseconds: 100));
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -657,23 +898,42 @@ class _ChatScreenState extends State<ChatScreen> {
                       _toggleArchive(isArchived: isArchived);
                     },
                   ),
-                  // 4. Block/Unblock User (Functioning)
-                  ListTile(
-                    leading: Icon(
-                      _isUserBlocked ? Icons.sentiment_satisfied : Icons.block,
-                      color: _isUserBlocked ? Colors.green : Colors.red,
-                    ),
-                    title: Text(
-                      _isUserBlocked ? 'Unblock User' : 'Block User',
-                      style: TextStyle(
+                  // 4. Block/Unblock User (Only show if not blocked by other user)
+
+                  // Show block/unblock option only if not blocked by other user
+                  if (!_isBlockedByUser)
+                    ListTile(
+                      leading: Icon(
+                        _isUserBlocked
+                            ? Icons.sentiment_satisfied
+                            : Icons.block,
                         color: _isUserBlocked ? Colors.green : Colors.red,
                       ),
+                      title: Text(
+                        _isUserBlocked ? 'Unblock User' : 'Block User',
+                        style: TextStyle(
+                          color: _isUserBlocked ? Colors.green : Colors.red,
+                        ),
+                      ),
+                      onTap: () {
+                        Navigator.pop(context); // Close the bottom sheet first
+                        _toggleBlockUser();
+                      },
+                    )
+                  else
+                    // Show info when blocked by other user
+                    ListTile(
+                      leading: const Icon(Icons.info, color: Colors.grey),
+                      title: const Text(
+                        'User has blocked you',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                      subtitle: const Text(
+                        'Blocking options are not available',
+                        style: TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                      onTap: null, // Disabled
                     ),
-                    onTap: () {
-                      Navigator.pop(context); // Close the bottom sheet first
-                      _toggleBlockUser();
-                    },
-                  ),
                   // 5. Delete Chat (Placeholder/Mock)
                   ListTile(
                     leading: const Icon(
@@ -807,6 +1067,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _showMessageOptions(MessageModel message, bool isMe) {
+    // Don't show message options if user is blocked
+    if (_isUserBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Message actions are disabled when blocked'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -900,6 +1171,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _editMessage(MessageModel message) {
+    // Don't allow editing if user is blocked
+    if (_isUserBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot edit messages when blocked'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final TextEditingController editController = TextEditingController(
       text: message.content,
     );
@@ -963,6 +1245,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _deleteMessageForMe(MessageModel message) {
+    // Don't allow deleting if user is blocked
+    if (_isUserBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot delete messages when blocked'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1003,6 +1296,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _unsendMessage(MessageModel message) {
+    // Don't allow unsending if user is blocked
+    if (_isUserBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot unsend messages when blocked'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1049,6 +1353,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _startReplyToMessage(MessageModel message) {
+    // Don't allow replying if user is blocked
+    if (_isUserBlocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot reply to messages when blocked'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _replyToMessage = message;
     });
@@ -1687,12 +2002,22 @@ class _ChatScreenState extends State<ChatScreen> {
             setState(() {
               _isUserBlocked = true;
             });
+            print('🔄 HOMEOWNER: Set _isUserBlocked = true after blocking');
+
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('${widget.otherUser.name} has been blocked'),
                 backgroundColor: Colors.orange,
               ),
             );
+
+            // Force a UI refresh after a short delay
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted) {
+                print('🔄 HOMEOWNER: Force refresh after blocking');
+                setState(() {});
+              }
+            });
           }
         }
       }
@@ -1810,7 +2135,9 @@ class _ChatScreenState extends State<ChatScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'You have blocked this user',
+                  _isUserBlocked
+                      ? 'You have blocked this user'
+                      : 'This user has blocked you',
                   style: TextStyle(
                     color: Colors.red[800],
                     fontWeight: FontWeight.w600,
@@ -1825,16 +2152,21 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: _toggleBlockUser,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red[600],
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          if (_isUserBlocked) ...[
+            const SizedBox(width: 12),
+            ElevatedButton(
+              onPressed: _toggleBlockUser,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[600],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+              ),
+              child: const Text('Unblock'),
             ),
-            child: const Text('Unblock'),
-          ),
+          ],
         ],
       ),
     );
@@ -1910,6 +2242,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();

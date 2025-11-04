@@ -3,7 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/chat_service.dart';
 import '../services/conversation_state_service.dart';
 import '../models/user_model.dart';
-import '../widgets/thread_cleanup_widget.dart';
+
 import 'chat_screen.dart';
 import 'settings/help_support_screen.dart';
 
@@ -56,117 +56,111 @@ class _ChatListScreenState extends State<ChatListScreen>
   }
 
   // Get unread message count for a user
-  Future<int> _getUnreadMessageCount(String userId) async {
-    try {
-      // Determine tradie and homeowner IDs
-      int tradieId, homeownerId;
-      if (widget.currentUserType == 'tradie') {
-        tradieId = widget.currentUserId;
-        homeownerId = int.parse(userId);
-      } else {
-        tradieId = int.parse(userId);
-        homeownerId = widget.currentUserId;
+  // Get unread message count stream for real-time updates
+  Stream<int> _getUnreadMessageCountStream(UserModel user) async* {
+    if (user.autoId == null) {
+      yield 0;
+      return;
+    }
+
+    // Determine tradie and homeowner IDs
+    int tradieId, homeownerId;
+    if (widget.currentUserType == 'tradie') {
+      tradieId = widget.currentUserId;
+      homeownerId = user.autoId!;
+    } else {
+      tradieId = user.autoId!;
+      homeownerId = widget.currentUserId;
+    }
+
+    // Listen to thread changes
+    await for (final threadQuery
+        in FirebaseFirestore.instance
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield 0;
+        continue;
       }
-
-      // Find thread
-      final threadQuery = await FirebaseFirestore.instance
-          .collection('threads')
-          .where('tradie_id', isEqualTo: tradieId)
-          .where('homeowner_id', isEqualTo: homeownerId)
-          .limit(1)
-          .get();
-
-      if (threadQuery.docs.isEmpty) return 0;
 
       final threadDoc = threadQuery.docs.first;
 
-      // Get unread messages count (messages not sent by current user)
-      final messagesQuery = await FirebaseFirestore.instance
-          .collection('threads')
-          .doc(threadDoc.id)
-          .collection('messages')
-          .where('sender_id', isNotEqualTo: widget.currentUserId)
-          .where('read', isEqualTo: false)
-          .get();
-
-      return messagesQuery.docs.length;
-    } catch (e) {
-      print('Error getting unread message count: $e');
-      return 0;
+      // Listen to unread messages count
+      await for (final messagesQuery
+          in FirebaseFirestore.instance
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .where('sender_id', isNotEqualTo: widget.currentUserId)
+              .where('read', isEqualTo: false)
+              .snapshots()) {
+        yield messagesQuery.docs.length;
+        break; // Only yield once per thread update
+      }
     }
   }
 
-  // Get last message for a user
-  Future<Map<String, dynamic>?> _getLastMessage(String userId) async {
-    try {
-      // Determine tradie and homeowner IDs
-      int tradieId, homeownerId;
-      if (widget.currentUserType == 'tradie') {
-        tradieId = widget.currentUserId;
-        homeownerId = int.parse(userId);
-      } else {
-        tradieId = int.parse(userId);
-        homeownerId = widget.currentUserId;
+  // Get last message stream for real-time updates
+  Stream<Map<String, dynamic>?> _getLastMessageStream(UserModel user) async* {
+    if (user.autoId == null) {
+      yield null;
+      return;
+    }
+
+    // Determine tradie and homeowner IDs
+    int tradieId, homeownerId;
+    if (widget.currentUserType == 'tradie') {
+      tradieId = widget.currentUserId;
+      homeownerId = user.autoId!;
+    } else {
+      tradieId = user.autoId!;
+      homeownerId = widget.currentUserId;
+    }
+
+    // Listen to thread changes
+    await for (final threadQuery
+        in FirebaseFirestore.instance
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield null;
+        continue;
       }
-
-      // Find thread
-      final threadQuery = await FirebaseFirestore.instance
-          .collection('threads')
-          .where('tradie_id', isEqualTo: tradieId)
-          .where('homeowner_id', isEqualTo: homeownerId)
-          .limit(1)
-          .get();
-
-      if (threadQuery.docs.isEmpty) return null;
 
       final threadDoc = threadQuery.docs.first;
-      final threadData = threadDoc.data();
 
-      // Get the most recent message from the thread's messages subcollection
-      final messagesQuery = await FirebaseFirestore.instance
-          .collection('threads')
-          .doc(threadDoc.id)
-          .collection('messages')
-          .orderBy('date', descending: true)
-          .limit(1)
-          .get();
-
-      if (messagesQuery.docs.isEmpty) {
-        return {
-          'content': threadData['last_message'] ?? '',
-          'senderName': 'Unknown',
-          'timestamp': threadData['last_message_time'],
-        };
-      }
-
-      final lastMessage = messagesQuery.docs.first.data();
-      final senderId = lastMessage['sender_id'] as int;
-      final senderType = lastMessage['sender_type'] as String;
-
-      // Get sender name
-      String senderName = 'Unknown';
-      try {
-        final senderDoc = await FirebaseFirestore.instance
-            .collection(senderType == 'tradie' ? 'tradies' : 'homeowners')
-            .where('autoId', isEqualTo: senderId)
-            .limit(1)
-            .get();
-
-        if (senderDoc.docs.isNotEmpty) {
-          senderName = senderDoc.docs.first.data()['name'] ?? 'Unknown';
+      // Listen to messages in this thread
+      await for (final messagesQuery
+          in FirebaseFirestore.instance
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .orderBy('date', descending: true)
+              .limit(1)
+              .snapshots()) {
+        if (messagesQuery.docs.isEmpty) {
+          final threadData = threadDoc.data();
+          yield {
+            'content': threadData['last_message'] ?? '',
+            'senderName': '',
+            'timestamp': threadData['last_message_time'],
+          };
+        } else {
+          final lastMessage = messagesQuery.docs.first.data();
+          yield {
+            'content': lastMessage['content'] ?? '',
+            'senderName': '',
+            'timestamp': lastMessage['date'],
+          };
         }
-      } catch (e) {
-        print('Error getting sender name: $e');
+        break; // Only yield once per thread update
       }
-
-      return {
-        'content': lastMessage['content'] ?? '',
-        'senderName': senderName,
-        'timestamp': lastMessage['date'],
-      };
-    } catch (e) {
-      print('Error getting last message: $e');
-      return null;
     }
   }
 
@@ -215,18 +209,6 @@ class _ChatListScreenState extends State<ChatListScreen>
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.cleaning_services),
-            tooltip: 'Fix Duplicate Threads',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ThreadCleanupWidget(),
-                ),
-              );
-            },
-          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -522,8 +504,8 @@ class _ChatListScreenState extends State<ChatListScreen>
               ),
             ),
             // Unread count badge
-            FutureBuilder<int>(
-              future: _getUnreadMessageCount(user.id),
+            StreamBuilder<int>(
+              stream: _getUnreadMessageCountStream(user),
               builder: (context, snapshot) {
                 final unreadCount = snapshot.data ?? 0;
                 if (unreadCount > 0) {
@@ -585,8 +567,8 @@ class _ChatListScreenState extends State<ChatListScreen>
                 user.tradeType!,
                 style: TextStyle(color: Colors.grey[600], fontSize: 12),
               ),
-            FutureBuilder<Map<String, dynamic>?>(
-              future: _getLastMessage(user.id),
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: _getLastMessageStream(user),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Text(
@@ -598,8 +580,6 @@ class _ChatListScreenState extends State<ChatListScreen>
                 if (snapshot.hasData && snapshot.data != null) {
                   final lastMessage = snapshot.data!;
                   final content = lastMessage['content'] as String? ?? '';
-                  final senderName =
-                      lastMessage['senderName'] as String? ?? 'Unknown';
                   final timestamp = lastMessage['timestamp'];
 
                   return Row(
@@ -607,7 +587,7 @@ class _ChatListScreenState extends State<ChatListScreen>
                       Expanded(
                         child: Text(
                           content.isNotEmpty
-                              ? '$senderName: $content'
+                              ? 'Last message: $content'
                               : 'No messages yet',
                           style: TextStyle(
                             color: Colors.grey[500],
@@ -646,8 +626,8 @@ class _ChatListScreenState extends State<ChatListScreen>
                 }
 
                 // No messages yet - check for unread count
-                return FutureBuilder<int>(
-                  future: _getUnreadMessageCount(user.id),
+                return StreamBuilder<int>(
+                  stream: _getUnreadMessageCountStream(user),
                   builder: (context, unreadSnapshot) {
                     final unreadCount = unreadSnapshot.data ?? 0;
 
@@ -722,18 +702,7 @@ class _ChatListScreenState extends State<ChatListScreen>
           color: isBlocked ? Colors.grey[400] : Theme.of(context).primaryColor,
         ),
         onTap: () {
-          if (isBlocked) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('This user is blocked'),
-                  backgroundColor: Colors.orange,
-                ),
-              );
-            }
-            return;
-          }
-
+          // Allow navigation to blocked users - they can still view the conversation
           if (user.autoId != null) {
             // Mark as read when opening chat
             ConversationStateService.markAsRead(user.id);

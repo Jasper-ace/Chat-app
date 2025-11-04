@@ -320,7 +320,7 @@ class ConversationStateService {
     return archivedList.contains(otherUserId);
   }
 
-  /// Check if user is blocked
+  /// Check if user is blocked (current user blocked the other user)
   static Future<bool> isUserBlocked(String otherUserId) async {
     try {
       final currentUser = _auth.currentUser;
@@ -352,6 +352,55 @@ class ConversationStateService {
       return false;
     } catch (e) {
       print('Error checking if user is blocked: $e');
+      return false;
+    }
+  }
+
+  /// Check if current user is blocked by another user
+  static Future<bool> isBlockedByUser(String otherUserId) async {
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) return false;
+
+      // Check if the other user has blocked the current user
+      // 1. Check blocked_users collection
+      final blockedUserDoc = await _firestore
+          .collection('blocked_users')
+          .doc('${otherUserId}_${currentUser.uid}')
+          .get();
+
+      if (blockedUserDoc.exists &&
+          (blockedUserDoc.data()?['is_active'] == true)) {
+        return true;
+      }
+
+      // 2. Check other user's userPreferences
+      final otherUserPrefsDoc = await _firestore
+          .collection('userPreferences')
+          .doc(otherUserId)
+          .get();
+
+      if (otherUserPrefsDoc.exists) {
+        final data = otherUserPrefsDoc.data() as Map<String, dynamic>;
+        final blockedList = List<String>.from(data['blockedUsers'] ?? []);
+        return blockedList.contains(currentUser.uid);
+      }
+
+      // 3. Check other user's userProfiles (for ChatService compatibility)
+      final otherUserProfileDoc = await _firestore
+          .collection('userProfiles')
+          .doc(otherUserId)
+          .get();
+
+      if (otherUserProfileDoc.exists) {
+        final data = otherUserProfileDoc.data() as Map<String, dynamic>;
+        final blockedList = List<String>.from(data['blockedUsers'] ?? []);
+        return blockedList.contains(currentUser.uid);
+      }
+
+      return false;
+    } catch (e) {
+      print('Error checking if blocked by user: $e');
       return false;
     }
   }
