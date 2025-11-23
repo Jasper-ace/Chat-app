@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../shared/services/chat_service.dart';
-import '../../../services/dual_storage_integration.dart';
+import '../repositories/chat_repository.dart';
+import '../../../core/services/dual_storage_integration.dart';
 
 class EnhancedChatWidget extends StatefulWidget {
   final String tradieFirebaseUid;
@@ -327,7 +327,7 @@ class _EnhancedChatWidgetState extends State<EnhancedChatWidget> {
 
                     // Debug timestamp for each message
                     print(
-                      '🕐 MESSAGE ${index}: ${messageData['message']} - timestamp: ${messageData['timestamp']} (${messageData['timestamp'].runtimeType})',
+                      '🕐 MESSAGE $index: ${messageData['message']} - timestamp: ${messageData['timestamp']} (${messageData['timestamp'].runtimeType})',
                     );
 
                     return Container(

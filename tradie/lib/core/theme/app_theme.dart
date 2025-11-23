@@ -207,6 +207,44 @@ class AppTheme {
         ),
       ),
 
+      // Elevated button theme
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.onPrimary,
+          elevation: AppDimensions.elevationMedium,
+          minimumSize: const Size(double.infinity, AppDimensions.buttonHeight),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+          ),
+          textStyle: AppTextStyles.buttonMedium,
+        ),
+      ),
+
+      // Text button theme
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: AppColors.primaryLight,
+          textStyle: AppTextStyles.buttonMedium,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+          ),
+        ),
+      ),
+
+      // Outlined button theme
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primaryLight,
+          side: const BorderSide(color: AppColors.primaryLight),
+          minimumSize: const Size(double.infinity, AppDimensions.buttonHeight),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+          ),
+          textStyle: AppTextStyles.buttonMedium,
+        ),
+      ),
+
       // Card theme
       cardTheme: CardThemeData(
         elevation: AppDimensions.elevationMedium,
@@ -249,6 +287,26 @@ class AppTheme {
         labelStyle: AppTextStyles.inputLabel.copyWith(color: AppColors.grey300),
         hintStyle: AppTextStyles.inputLabel.copyWith(color: AppColors.grey500),
         errorStyle: AppTextStyles.errorText,
+      ),
+
+      // Snack bar theme
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: AppColors.grey700,
+        contentTextStyle: AppTextStyles.bodyMedium.copyWith(
+          color: AppColors.grey100,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+        ),
+        behavior: SnackBarBehavior.floating,
+        elevation: AppDimensions.elevationMedium,
+      ),
+
+      // Progress indicator theme
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: AppColors.primaryLight,
+        linearTrackColor: AppColors.grey600,
+        circularTrackColor: AppColors.grey600,
       ),
     );
   }

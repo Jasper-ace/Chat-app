@@ -6,6 +6,10 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 
+import '../../../core/theme/widgets/animated_theme_toggle.dart';
+
+import '../../settings/views/settings_screen.dart';
+
 class FirebaseDashboardScreen extends ConsumerWidget {
   const FirebaseDashboardScreen({super.key});
 
@@ -19,6 +23,8 @@ class FirebaseDashboardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text('Dashboard', style: AppTextStyles.appBarTitle),
         actions: [
+          const AnimatedThemeToggle(),
+          const SizedBox(width: AppDimensions.spacing8),
           PopupMenuButton<String>(
             onSelected: (value) async {
               if (value == 'logout') {
@@ -191,6 +197,22 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                       );
                     },
                   ),
+                  _buildActionCard(
+                    context,
+                    icon: Icons.settings,
+                    title: 'Settings',
+                    subtitle: 'App preferences',
+                    color: AppColors.grey600,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  const AnimatedThemeCard(),
                 ],
               ),
             ),

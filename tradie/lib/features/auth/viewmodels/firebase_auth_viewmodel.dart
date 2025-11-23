@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../shared/models/user_model.dart';
+import '../../chat/models/user_model.dart';
 import '../services/tradie_auth_service.dart';
 
 // Firebase Auth state

@@ -1,0 +1,1065 @@
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../repositories/chat_repository.dart';
+import '../repositories/conversation_repository.dart';
+import '../models/user_model.dart';
+
+import 'chat_screen.dart';
+
+class ChatListScreen extends StatefulWidget {
+  final String currentUserType;
+  final int currentUserId;
+
+  const ChatListScreen({
+    super.key,
+    required this.currentUserType,
+    required this.currentUserId,
+  });
+
+  @override
+  State<ChatListScreen> createState() => _ChatListScreenState();
+}
+
+class _ChatListScreenState extends State<ChatListScreen>
+    with TickerProviderStateMixin {
+  final ChatService _chatService = ChatService();
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  late TabController _tabController;
+  bool _showRecentMessages = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    // Preferences loaded via stream now
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  // Preferences are now loaded via stream in build method
+
+  // Stream for real-time user preferences updates
+  Stream<Map<String, dynamic>> _getUserPreferencesStream() {
+    return ConversationStateService.getUserPreferencesStream();
+  }
+
+  // Get unread message count for a user
+  // Get unread message count stream for real-time updates
+  Stream<int> _getUnreadMessageCountStream(UserModel user) async* {
+    if (user.autoId == null) {
+      yield 0;
+      return;
+    }
+
+    // Determine tradie and homeowner IDs
+    int tradieId, homeownerId;
+    if (widget.currentUserType == 'tradie') {
+      tradieId = widget.currentUserId;
+      homeownerId = user.autoId!;
+    } else {
+      tradieId = user.autoId!;
+      homeownerId = widget.currentUserId;
+    }
+
+    // Listen to thread changes
+    await for (final threadQuery
+        in FirebaseFirestore.instance
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield 0;
+        continue;
+      }
+
+      final threadDoc = threadQuery.docs.first;
+
+      // Listen to unread messages count
+      await for (final messagesQuery
+          in FirebaseFirestore.instance
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .where('sender_id', isNotEqualTo: widget.currentUserId)
+              .where('read', isEqualTo: false)
+              .snapshots()) {
+        yield messagesQuery.docs.length;
+        break; // Only yield once per thread update
+      }
+    }
+  }
+
+  // Get last message stream for real-time updates
+  Stream<Map<String, dynamic>?> _getLastMessageStream(UserModel user) async* {
+    if (user.autoId == null) {
+      yield null;
+      return;
+    }
+
+    // Determine tradie and homeowner IDs
+    int tradieId, homeownerId;
+    if (widget.currentUserType == 'tradie') {
+      tradieId = widget.currentUserId;
+      homeownerId = user.autoId!;
+    } else {
+      tradieId = user.autoId!;
+      homeownerId = widget.currentUserId;
+    }
+
+    // Listen to thread changes
+    await for (final threadQuery
+        in FirebaseFirestore.instance
+            .collection('threads')
+            .where('tradie_id', isEqualTo: tradieId)
+            .where('homeowner_id', isEqualTo: homeownerId)
+            .limit(1)
+            .snapshots()) {
+      if (threadQuery.docs.isEmpty) {
+        yield null;
+        continue;
+      }
+
+      final threadDoc = threadQuery.docs.first;
+
+      // Listen to messages in this thread
+      await for (final messagesQuery
+          in FirebaseFirestore.instance
+              .collection('threads')
+              .doc(threadDoc.id)
+              .collection('messages')
+              .orderBy('date', descending: true)
+              .limit(1)
+              .snapshots()) {
+        if (messagesQuery.docs.isEmpty) {
+          final threadData = threadDoc.data();
+          yield {
+            'content': threadData['last_message'] ?? '',
+            'senderName': '',
+            'timestamp': threadData['last_message_time'],
+          };
+        } else {
+          final lastMessage = messagesQuery.docs.first.data();
+          yield {
+            'content': lastMessage['content'] ?? '',
+            'senderName': '',
+            'timestamp': lastMessage['date'],
+          };
+        }
+        break; // Only yield once per thread update
+      }
+    }
+  }
+
+  // Format timestamp for display
+  String _formatTimestamp(dynamic timestamp) {
+    if (timestamp == null) return '';
+
+    DateTime dateTime;
+    if (timestamp is Timestamp) {
+      dateTime = timestamp.toDate();
+    } else if (timestamp is DateTime) {
+      dateTime = timestamp;
+    } else {
+      return '';
+    }
+
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inDays == 0) {
+      // Today - show time
+      return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } else if (difference.inDays == 1) {
+      // Yesterday
+      return 'Yesterday';
+    } else if (difference.inDays < 7) {
+      // This week - show day name
+      const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      return days[dateTime.weekday - 1];
+    } else {
+      // Older - show date
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF4A90E2),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text(
+          'Messages',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              // TODO: Navigate to settings screen
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Settings coming soon!')),
+              );
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Blue header section with search
+          Container(
+            color: const Color(0xFF4A90E2),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(25),
+              ),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search Messages',
+                  hintStyle: TextStyle(color: Colors.grey[500], fontSize: 16),
+                  prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: Icon(Icons.clear, color: Colors.grey[500]),
+                          onPressed: () {
+                            _searchController.clear();
+                          },
+                        )
+                      : null,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 15,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // Tabs section
+          Container(
+            color: Colors.white,
+            child: TabBar(
+              controller: _tabController,
+              onTap: (index) {
+                setState(() {
+                  _showRecentMessages = index == 0;
+                });
+              },
+              tabs: const [
+                Tab(text: 'Recent message'),
+                Tab(text: 'Archived'),
+              ],
+              labelColor: const Color(0xFF4A90E2),
+              unselectedLabelColor: Colors.grey[600],
+              indicatorColor: const Color(0xFF4A90E2),
+              labelStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+
+          // Users list with search and filtering
+          Expanded(
+            child: StreamBuilder<Map<String, dynamic>>(
+              stream: _getUserPreferencesStream(),
+              builder: (context, prefsSnapshot) {
+                // Use stream data directly instead of local variable
+                final userPreferences = prefsSnapshot.hasData
+                    ? prefsSnapshot.data!
+                    : {
+                        'pinnedConversations': <String>[],
+                        'archivedConversations': <String>[],
+                        'blockedUsers': <String>[],
+                        'mutedConversations': <String>[],
+                        'unreadConversations': <String>[],
+                      };
+
+                return StreamBuilder<QuerySnapshot>(
+                  stream: _searchQuery.isNotEmpty
+                      ? _chatService.searchUsers(
+                          widget.currentUserType,
+                          _searchQuery,
+                        )
+                      : _chatService.getAvailableUsers(widget.currentUserType),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Error loading users',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '${snapshot.error}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _searchQuery.isNotEmpty
+                                  ? Icons.search_off
+                                  : Icons.people_outline,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _searchQuery.isNotEmpty
+                                  ? 'No results found for "$_searchQuery"'
+                                  : 'No ${widget.currentUserType == 'homeowner' ? 'tradies' : 'homeowners'} available',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _searchQuery.isNotEmpty
+                                  ? 'Try a different search term'
+                                  : 'Check back later for new users',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    List<UserModel> users = snapshot.data!.docs
+                        .map((doc) => UserModel.fromFirestore(doc))
+                        .toList();
+
+                    // Filter users based on current tab and search
+                    users = users.where((user) {
+                      final isArchived = _isConversationArchived(
+                        user.id,
+                        userPreferences,
+                      );
+                      final matchesSearch =
+                          _searchQuery.isEmpty ||
+                          user.name.toLowerCase().contains(_searchQuery) ||
+                          (user.tradeType?.toLowerCase().contains(
+                                _searchQuery,
+                              ) ??
+                              false);
+
+                      if (_showRecentMessages) {
+                        return !isArchived && matchesSearch;
+                      } else {
+                        return isArchived && matchesSearch;
+                      }
+                    }).toList();
+
+                    // Sort users: pinned first, then by last message time
+                    users.sort((a, b) {
+                      final aPinned = _isConversationPinned(
+                        a.id,
+                        userPreferences,
+                      );
+                      final bPinned = _isConversationPinned(
+                        b.id,
+                        userPreferences,
+                      );
+
+                      if (aPinned && !bPinned) return -1;
+                      if (!aPinned && bPinned) return 1;
+
+                      // Both pinned or both not pinned, sort by name
+                      return a.name.compareTo(b.name);
+                    });
+
+                    if (users.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _showRecentMessages
+                                  ? Icons.chat_bubble_outline
+                                  : Icons.archive,
+                              size: 64,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _showRecentMessages
+                                  ? 'No recent conversations'
+                                  : 'No archived conversations',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _showRecentMessages
+                                  ? 'Start a conversation with someone'
+                                  : 'Archived conversations will appear here',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return ListView.builder(
+                      itemCount: users.length,
+                      itemBuilder: (context, index) {
+                        final user = users[index];
+                        return _buildUserTile(user, userPreferences);
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Build user tile with last message
+  Widget _buildUserTile(UserModel user, Map<String, dynamic> userPreferences) {
+    final isPinned = _isConversationPinned(user.id, userPreferences);
+    final isArchived = _isConversationArchived(user.id, userPreferences);
+    final isMuted = _isConversationMuted(user.id, userPreferences);
+    final isUnread = _isConversationUnread(user.id, userPreferences);
+    final isBlocked = _isUserBlocked(user.id, userPreferences);
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      color: isPinned ? Colors.blue[50] : null,
+      child: ListTile(
+        leading: Stack(
+          children: [
+            CircleAvatar(
+              backgroundColor: isBlocked
+                  ? Colors.red[400]
+                  : Theme.of(context).primaryColor,
+              child: Text(
+                user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            // Unread count badge
+            StreamBuilder<int>(
+              stream: _getUnreadMessageCountStream(user),
+              builder: (context, snapshot) {
+                final unreadCount = snapshot.data ?? 0;
+                if (unreadCount > 0) {
+                  return Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 20,
+                        minHeight: 20,
+                      ),
+                      child: Text(
+                        unreadCount > 99 ? '99+' : '$unreadCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+          ],
+        ),
+        title: Row(
+          children: [
+            if (isPinned)
+              Icon(Icons.push_pin, size: 16, color: Colors.blue[600]),
+            if (isPinned) const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                user.name.isNotEmpty ? user.name : 'Unknown User',
+                style: TextStyle(
+                  fontWeight: isUnread ? FontWeight.bold : FontWeight.w500,
+                  color: isBlocked ? Colors.grey[600] : null,
+                ),
+              ),
+            ),
+            if (isMuted)
+              Icon(Icons.volume_off, size: 16, color: Colors.grey[600]),
+            if (isArchived)
+              Icon(Icons.archive, size: 16, color: Colors.grey[600]),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (user.userType == 'tradie' && user.tradeType != null)
+              Text(
+                user.tradeType!,
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: _getLastMessageStream(user),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Text(
+                    'Loading...',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                  );
+                }
+
+                if (snapshot.hasData && snapshot.data != null) {
+                  final lastMessage = snapshot.data!;
+                  final content = lastMessage['content'] as String? ?? '';
+                  final timestamp = lastMessage['timestamp'];
+
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          content.isNotEmpty
+                              ? 'Last message: $content'
+                              : 'No messages yet',
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 11,
+                            fontWeight: isUnread
+                                ? FontWeight.w500
+                                : FontWeight.normal,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (timestamp != null) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          _formatTimestamp(timestamp),
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                      if (isBlocked) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          'Blocked',
+                          style: TextStyle(
+                            color: Colors.red[600],
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                }
+
+                // No messages yet - check for unread count
+                return StreamBuilder<int>(
+                  stream: _getUnreadMessageCountStream(user),
+                  builder: (context, unreadSnapshot) {
+                    final unreadCount = unreadSnapshot.data ?? 0;
+
+                    return Row(
+                      children: [
+                        if (unreadCount > 0) ...[
+                          Text(
+                            'You have ',
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 11,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              '$unreadCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            ' unread message${unreadCount > 1 ? 's' : ''}',
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 11,
+                            ),
+                          ),
+                        ] else ...[
+                          Text(
+                            'No messages yet',
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 11,
+                              fontWeight: isUnread
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                        if (isBlocked) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            'Blocked',
+                            style: TextStyle(
+                              color: Colors.red[600],
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+        trailing: Icon(
+          Icons.chat_bubble_outline,
+          color: isBlocked ? Colors.grey[400] : Theme.of(context).primaryColor,
+        ),
+        onTap: () {
+          // Allow navigation to blocked users - they can still view the conversation
+          if (user.autoId != null) {
+            // Mark as read when opening chat
+            ConversationStateService.markAsRead(user.id);
+
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ChatScreen(
+                  otherUser: user,
+                  currentUserType: widget.currentUserType,
+                  currentUserId: widget.currentUserId,
+                ),
+              ),
+            ).then((_) {
+              // Preferences update automatically via stream
+            });
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('User ID not available'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          }
+        },
+        onLongPress: () {
+          _showConversationOptions(context, user, userPreferences);
+        },
+      ),
+    );
+  }
+
+  // Helper methods to check conversation states
+  bool _isConversationPinned(String userId, Map<String, dynamic> preferences) {
+    final pinnedList = List<String>.from(
+      preferences['pinnedConversations'] ?? [],
+    );
+    return pinnedList.contains(userId);
+  }
+
+  bool _isConversationArchived(
+    String userId,
+    Map<String, dynamic> preferences,
+  ) {
+    final archivedList = List<String>.from(
+      preferences['archivedConversations'] ?? [],
+    );
+    return archivedList.contains(userId);
+  }
+
+  bool _isConversationMuted(String userId, Map<String, dynamic> preferences) {
+    final mutedList = List<String>.from(
+      preferences['mutedConversations'] ?? [],
+    );
+    return mutedList.contains(userId);
+  }
+
+  bool _isConversationUnread(String userId, Map<String, dynamic> preferences) {
+    final unreadList = List<String>.from(
+      preferences['unreadConversations'] ?? [],
+    );
+    return unreadList.contains(userId);
+  }
+
+  bool _isUserBlocked(String userId, Map<String, dynamic> preferences) {
+    final blockedList = List<String>.from(preferences['blockedUsers'] ?? []);
+    return blockedList.contains(userId);
+  }
+
+  // Show conversation options dialog
+  void _showConversationOptions(
+    BuildContext context,
+    UserModel user,
+    Map<String, dynamic> userPreferences,
+  ) {
+    final isPinned = _isConversationPinned(user.id, userPreferences);
+    final isArchived = _isConversationArchived(user.id, userPreferences);
+    final isMuted = _isConversationMuted(user.id, userPreferences);
+    final isBlocked = _isUserBlocked(user.id, userPreferences);
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    child: Text(
+                      user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user.name.isNotEmpty ? user.name : 'Unknown User',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (user.userType == 'tradie' && user.tradeType != null)
+                          Text(
+                            user.tradeType!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Divider(height: 1),
+
+            // Options
+            _buildOptionTile(
+              icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+              title: isPinned ? 'Unpin' : 'Pin',
+              onTap: () async {
+                Navigator.pop(context);
+                try {
+                  if (isPinned) {
+                    await ConversationStateService.unpinConversation(user.id);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} unpinned')),
+                      );
+                    }
+                  } else {
+                    await ConversationStateService.pinConversation(user.id);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} pinned')),
+                      );
+                    }
+                  }
+                  // Preferences update automatically via stream
+                } catch (e) {
+                  if (mounted) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+
+            _buildOptionTile(
+              icon: isArchived ? Icons.unarchive : Icons.archive,
+              title: isArchived ? 'Unarchive' : 'Archive',
+              onTap: () async {
+                Navigator.pop(context);
+                try {
+                  if (isArchived) {
+                    await ConversationStateService.unarchiveConversation(
+                      user.id,
+                    );
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} unarchived')),
+                      );
+                    }
+                  } else {
+                    await ConversationStateService.archiveConversation(user.id);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} archived')),
+                      );
+                    }
+                  }
+                  // Preferences update automatically via stream
+                } catch (e) {
+                  if (mounted) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+
+            _buildOptionTile(
+              icon: isBlocked ? Icons.block : Icons.block,
+              title: isBlocked ? 'Unblock' : 'Block',
+              color: Colors.red,
+              onTap: () async {
+                Navigator.pop(context);
+
+                if (!isBlocked) {
+                  // Show confirmation dialog for blocking
+                  final shouldBlock = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Block User'),
+                      content: Text(
+                        'Are you sure you want to block ${user.name}? You won\'t receive messages from them.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red,
+                          ),
+                          child: const Text('Block'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (shouldBlock != true) return;
+                }
+
+                try {
+                  if (isBlocked) {
+                    await ConversationStateService.unblockUser(user.id);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} unblocked')),
+                      );
+                    }
+                  } else {
+                    await ConversationStateService.blockUser(
+                      user.id,
+                      user.userType,
+                    );
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} blocked')),
+                      );
+                    }
+                  }
+                  // Preferences update automatically via stream
+                } catch (e) {
+                  if (mounted) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+
+            _buildOptionTile(
+              icon: isMuted ? Icons.volume_up : Icons.volume_off,
+              title: isMuted ? 'Unmute' : 'Mute',
+              onTap: () async {
+                Navigator.pop(context);
+                try {
+                  if (isMuted) {
+                    await ConversationStateService.unmuteConversation(user.id);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} unmuted')),
+                      );
+                    }
+                  } else {
+                    await ConversationStateService.muteConversation(user.id);
+                    if (mounted) {
+                      final messenger = ScaffoldMessenger.of(context);
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('${user.name} muted')),
+                      );
+                    }
+                  }
+                  // Preferences update automatically via stream
+                } catch (e) {
+                  if (mounted) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+
+            _buildOptionTile(
+              icon: Icons.mark_as_unread,
+              title: 'Mark as unread',
+              onTap: () async {
+                Navigator.pop(context);
+                try {
+                  await ConversationStateService.markAsUnread(user.id);
+                  if (mounted) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('${user.name} marked as unread')),
+                    );
+                  }
+                  // Preferences update automatically via stream
+                } catch (e) {
+                  if (mounted) {
+                    final messenger = ScaffoldMessenger.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOptionTile({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: color ?? Colors.grey[700]),
+      title: Text(
+        title,
+        style: TextStyle(
+          color: color ?? Colors.grey[800],
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+}

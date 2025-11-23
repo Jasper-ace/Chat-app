@@ -5,6 +5,9 @@ import '../viewmodels/auth_viewmodel.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/theme/widgets/theme_toggle.dart';
+import '../../../core/providers/theme_provider.dart';
+import '../../settings/views/settings_screen.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -19,6 +22,8 @@ class DashboardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text('Dashboard', style: AppTextStyles.appBarTitle),
         actions: [
+          const ThemeToggle(),
+          const SizedBox(width: AppDimensions.spacing8),
           PopupMenuButton<String>(
             onSelected: (value) async {
               if (value == 'logout') {
@@ -150,6 +155,22 @@ class DashboardScreen extends ConsumerWidget {
                       );
                     },
                   ),
+                  _buildActionCard(
+                    context,
+                    icon: Icons.settings,
+                    title: 'Settings',
+                    subtitle: 'App preferences',
+                    color: AppColors.grey600,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildThemeCard(context, ref),
                 ],
               ),
             ),
@@ -198,6 +219,96 @@ class DashboardScreen extends ConsumerWidget {
               const SizedBox(height: AppDimensions.spacing4),
               Text(
                 subtitle,
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemeCard(BuildContext context, WidgetRef ref) {
+    final currentTheme = ref.watch(themeProvider);
+    final themeNotifier = ref.read(themeProvider.notifier);
+
+    IconData themeIcon;
+    String themeTitle;
+    String themeSubtitle;
+    Color themeColor;
+
+    switch (currentTheme) {
+      case AppThemeMode.light:
+        themeIcon = Icons.light_mode;
+        themeTitle = 'Light Mode';
+        themeSubtitle = 'Tap to switch';
+        themeColor = AppColors.warning;
+        break;
+      case AppThemeMode.dark:
+        themeIcon = Icons.dark_mode;
+        themeTitle = 'Dark Mode';
+        themeSubtitle = 'Tap to switch';
+        themeColor = AppColors.info;
+        break;
+      case AppThemeMode.system:
+        themeIcon = Icons.settings_system_daydream;
+        themeTitle = 'System Mode';
+        themeSubtitle = 'Tap to switch';
+        themeColor = AppColors.primary;
+        break;
+    }
+
+    return Card(
+      elevation: 2,
+      child: InkWell(
+        onTap: () {
+          // Cycle through themes: light -> dark -> system -> light
+          switch (currentTheme) {
+            case AppThemeMode.light:
+              themeNotifier.setTheme(AppThemeMode.dark);
+              break;
+            case AppThemeMode.dark:
+              themeNotifier.setTheme(AppThemeMode.system);
+              break;
+            case AppThemeMode.system:
+              themeNotifier.setTheme(AppThemeMode.light);
+              break;
+          }
+        },
+        borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+        child: Padding(
+          padding: const EdgeInsets.all(AppDimensions.paddingMedium),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(AppDimensions.paddingMedium),
+                decoration: BoxDecoration(
+                  color: themeColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(
+                    AppDimensions.radiusLarge,
+                  ),
+                ),
+                child: Icon(
+                  themeIcon,
+                  size: AppDimensions.iconLarge,
+                  color: themeColor,
+                ),
+              ),
+              const SizedBox(height: AppDimensions.spacing12),
+              Text(
+                themeTitle,
+                style: AppTextStyles.titleMedium.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppDimensions.spacing4),
+              Text(
+                themeSubtitle,
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.onSurfaceVariant,
                 ),
