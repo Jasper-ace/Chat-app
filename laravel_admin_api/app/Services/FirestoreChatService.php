@@ -94,30 +94,48 @@ class FirestoreChatService
      */
     protected function findOrCreateThread($tradieId, $homeownerId)
     {
-        // Query for existing thread
-        $threads = $this->database->getReference('threads')
-            ->orderByChild('tradie_id')
-            ->equalTo($tradieId)
-            ->getValue();
+        // Ensure we have valid IDs (not 0 or null)
+        if (empty($tradieId) || empty($homeownerId) || $tradieId == 0 || $homeownerId == 0) {
+            Log::error("Invalid user IDs for thread", [
+                'tradie_id' => $tradieId,
+                'homeowner_id' => $homeownerId,
+            ]);
+            throw new \Exception("Invalid user IDs: tradie_id=$tradieId, homeowner_id=$homeownerId");
+        }
+
+        // Get all threads and search for matching one
+        $threads = $this->database->getReference('threads')->getValue();
 
         if ($threads) {
             foreach ($threads as $threadKey => $threadData) {
-                if (isset($threadData['homeowner_id']) && $threadData['homeowner_id'] == $homeownerId) {
+                // Check if both tradie_id and homeowner_id match
+                // This ensures the same thread is used regardless of who initiates
+                if (isset($threadData['tradie_id']) && 
+                    isset($threadData['homeowner_id']) &&
+                    $threadData['tradie_id'] == $tradieId && 
+                    $threadData['homeowner_id'] == $homeownerId) {
+                    
+                    Log::info("Found existing thread", [
+                        'thread_key' => $threadKey,
+                        'tradie_id' => $tradieId,
+                        'homeowner_id' => $homeownerId,
+                    ]);
+                    
                     return $threadKey;
                 }
             }
         }
 
-        // Create new thread
+        // Create new thread only if no match found
         $threadId = $this->getNextThreadId();
         $threadDocName = "threadID_$threadId";
 
         $this->database->getReference("threads/$threadDocName")->set([
-            'thread_id' => $threadId,
-            'sender_1' => $tradieId,
-            'sender_2' => $homeownerId,
-            'tradie_id' => $tradieId,
-            'homeowner_id' => $homeownerId,
+            'thread_id' => (int)$threadId,
+            'sender_1' => (int)$tradieId,
+            'sender_2' => (int)$homeownerId,
+            'tradie_id' => (int)$tradieId,
+            'homeowner_id' => (int)$homeownerId,
             'created_at' => ['.sv' => 'timestamp'],
             'updated_at' => ['.sv' => 'timestamp'],
             'last_message' => '',
@@ -129,6 +147,7 @@ class FirestoreChatService
 
         Log::info("Created new thread", [
             'thread_id' => $threadId,
+            'thread_doc_name' => $threadDocName,
             'tradie_id' => $tradieId,
             'homeowner_id' => $homeownerId,
         ]);

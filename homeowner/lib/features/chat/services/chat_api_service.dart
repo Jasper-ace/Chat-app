@@ -11,7 +11,8 @@ class ChatApiService {
   }
 
   // Send message via Laravel API (which writes to Firebase)
-  Future<bool> sendMessage({
+  // Returns the thread_id if successful, null otherwise
+  Future<String?> sendMessage({
     required String chatId,
     required String senderId,
     required String senderType,
@@ -47,10 +48,20 @@ class ChatApiService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final data = jsonDecode(response.body);
-        return data['success'] == true;
+        print('📦 Parsed response data: $data');
+        print('📦 data["data"]: ${data['data']}');
+
+        if (data['success'] == true) {
+          // The response structure is: { success: true, data: { success: true, thread_id: "...", message_id: 1 } }
+          final responseData = data['data'];
+          if (responseData != null && responseData['thread_id'] != null) {
+            return responseData['thread_id'] as String;
+          }
+          print('❌ No thread_id in response data');
+        }
       }
 
-      return false;
+      return null;
     } catch (e) {
       print('❌ Send message error: $e');
       rethrow;

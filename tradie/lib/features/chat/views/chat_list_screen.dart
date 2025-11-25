@@ -445,7 +445,16 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
             ],
           ],
         ),
-        onTap: () => context.push('/chat/${chat['id']}'),
+        onTap: () {
+          context.go(
+            '/chat/${chat['id']}',
+            extra: {
+              'otherUserName': chat['name'] ?? 'User',
+              'otherUserId': (chat['homeowner_id'] ?? 0).toString(),
+              'otherUserType': 'homeowner',
+            },
+          );
+        },
         onLongPress: () => _showChatOptions(chat),
       ),
     );
@@ -580,16 +589,13 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
       final userId = await _authService.getUserId();
       if (userId == null) return;
 
-      final chatId = await _chatService.createChatRoom(
-        participant1Id: userId.toString(),
-        participant1Type: 'tradie',
-        participant2Id: user['id'].toString(),
-        participant2Type: 'homeowner',
-      );
+      // Don't create thread yet - just navigate to chat screen
+      // Thread will be created when first message is sent
+      final tempChatId = 'new_${userId}_${user['id']}';
 
-      if (chatId != null && mounted) {
+      if (mounted) {
         context.go(
-          '/chat/$chatId',
+          '/chat/$tempChatId',
           extra: {
             'otherUserName': user['name'] ?? 'Homeowner',
             'otherUserId': user['id'].toString(),

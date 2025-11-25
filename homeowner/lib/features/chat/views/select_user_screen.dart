@@ -7,7 +7,6 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../auth/services/homeowner_api_auth_service.dart';
-import '../services/chat_api_service.dart';
 
 class SelectUserScreen extends ConsumerStatefulWidget {
   const SelectUserScreen({super.key});
@@ -18,7 +17,6 @@ class SelectUserScreen extends ConsumerStatefulWidget {
 
 class _SelectUserScreenState extends ConsumerState<SelectUserScreen> {
   final _authService = HomeownerApiAuthService();
-  final _chatService = ChatApiService();
   List<Map<String, dynamic>> _users = [];
   bool _isLoading = true;
   String _searchQuery = '';
@@ -75,44 +73,20 @@ class _SelectUserScreenState extends ConsumerState<SelectUserScreen> {
         throw Exception('Not authenticated');
       }
 
-      // Show loading
-      if (!mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
+      // Generate temporary chat ID - thread will be created when first message is sent
+      final tempChatId = 'new_${userId}_${tradie['id']}';
+
+      // Navigate to chat screen immediately without creating thread
+      context.go(
+        '/chat/$tempChatId',
+        extra: {
+          'otherUserName': tradie['first_name'] ?? tradie['name'] ?? 'Tradie',
+          'otherUserId': (tradie['id'] ?? 0).toString(),
+          'otherUserType': 'tradie',
+        },
       );
-
-      // Create chat room
-      final chatId = await _chatService.createChatRoom(
-        participant1Id: userId.toString(),
-        participant1Type: 'homeowner',
-        participant2Id: tradie['id'].toString(),
-        participant2Type: 'tradie',
-      );
-
-      if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
-
-      if (chatId != null) {
-        // Navigate to chat screen
-        context.go(
-          '/chat/$chatId',
-          extra: {
-            'otherUserName': tradie['name'] ?? 'Tradie',
-            'otherUserId': tradie['id'].toString(),
-            'otherUserType': 'tradie',
-          },
-        );
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Failed to create chat')));
-      }
     } catch (e) {
       if (!mounted) return;
-      Navigator.pop(context); // Close loading dialog
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error: $e')));

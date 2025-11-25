@@ -152,14 +152,21 @@ class ChatController extends Controller
 
             if ($result['success']) {
                 // Also save to MySQL for backup/analytics
-                Message::create([
-                    'sender_firebase_uid' => (string) $request->sender_id,
-                    'receiver_firebase_uid' => (string) $request->receiver_id,
-                    'sender_type' => $request->sender_type,
-                    'receiver_type' => $request->receiver_type,
-                    'message' => $request->message,
-                    'sent_at' => now(),
-                ]);
+                try {
+                    Message::create([
+                        'firebase_thread_id' => $result['thread_id'] ?? null,
+                        'firebase_message_id' => isset($result['message_id']) ? 'msg_' . $result['message_id'] : null,
+                        'sender_id' => $request->sender_id,
+                        'receiver_id' => $request->receiver_id,
+                        'sender_type' => $request->sender_type,
+                        'receiver_type' => $request->receiver_type,
+                        'message' => $request->message,
+                        'sent_at' => now(),
+                    ]);
+                } catch (\Exception $e) {
+                    // Log but don't fail the request if MySQL save fails
+                    Log::warning('Failed to save message to MySQL: ' . $e->getMessage());
+                }
 
                 return response()->json([
                     'success' => true,

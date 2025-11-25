@@ -36,6 +36,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _isLoading = true;
   bool _isSending = false;
   String? _currentUserId;
+  String? _actualChatId; // Track the actual chat ID after thread creation
 
   @override
   void initState() {
@@ -48,17 +49,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Future<void> _initChat() async {
     _currentUserId = (await _authService.getUserId())?.toString();
     print('🔥🔥🔥 Current user ID: $_currentUserId');
-    _listenToMessages();
+
+    // Only listen to messages if this is an existing chat (not a new one)
+    if (!widget.chatId.startsWith('new_')) {
+      _listenToMessages();
+    } else {
+      // For new chats, just show empty state
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   void _listenToMessages() {
-    print('🔥🔥🔥 Listening to Firebase path: threads/${widget.chatId}');
-    print('🔥🔥🔥 Chat ID received: ${widget.chatId}');
+    final chatId = _actualChatId ?? widget.chatId;
+    print('🔥🔥🔥 Listening to Firebase path: threads/$chatId');
+    print('🔥🔥🔥 Chat ID received: $chatId');
 
     // Listen to the specific thread
-    final messagesRef = FirebaseDatabase.instance.ref(
-      'threads/${widget.chatId}',
-    );
+    final messagesRef = FirebaseDatabase.instance.ref('threads/$chatId');
 
     messagesRef.onValue.listen(
       (event) {
@@ -157,14 +166,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         throw Exception('User not authenticated');
       }
 
-      await _chatService.sendMessage(
-        chatId: widget.chatId,
+      bool isNewChat =
+          widget.chatId.startsWith('new_') && _actualChatId == null;
+
+      // Send message - backend will find or create thread automatically
+      // and return the thread_id
+      final threadId = await _chatService.sendMessage(
+        chatId: 'dummy', // Not used by backend
         senderId: userId.toString(),
         senderType: 'tradie',
         receiverId: widget.otherUserId,
         receiverType: widget.otherUserType,
         message: messageText,
       );
+
+      if (threadId == null) {
+        throw Exception('Failed to send message - no thread_id returned');
+      }
+
+      print('✅ Message sent successfully to thread: $threadId');
+
+      if (isNewChat) {
+        // Backend returned the thread_id, use it to listen
+        setState(() {
+          _actualChatId = threadId;
+        });
+        _listenToMessages();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
