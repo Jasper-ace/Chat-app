@@ -40,8 +40,16 @@ class TradieAuthController extends Controller
         }
 
         try {
+            // Split name into first, middle, last
+            $nameParts = explode(' ', trim($request->name));
+            $firstName = $nameParts[0] ?? '';
+            $lastName = count($nameParts) > 1 ? array_pop($nameParts) : '';
+            $middleName = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : '';
+            
             $tradie = Tradie::create([
-                'name' => $request->name,
+                'first_name' => $firstName,
+                'middle_name' => $middleName,
+                'last_name' => $lastName,
                 'email' => $request->email,
                 'phone' => $request->phone,
                 'password' => Hash::make($request->password),
@@ -60,11 +68,15 @@ class TradieAuthController extends Controller
 
             $token = $tradie->createToken('tradie-token')->plainTextToken;
 
+            // Build full name
+            $fullName = trim($tradie->first_name . ' ' . $tradie->middle_name . ' ' . $tradie->last_name);
+            
             return response()->json([
                 'success' => true,
                 'data' => [
                     'user' => [
                         'id' => $tradie->id,
+                        'name' => $fullName,
                         'first_name' => $tradie->first_name,
                         'last_name' => $tradie->last_name,
                         'middle_name' => $tradie->middle_name,
@@ -143,11 +155,15 @@ class TradieAuthController extends Controller
 
         $token = $tradie->createToken('tradie-token')->plainTextToken;
 
+        // Build full name
+        $fullName = trim($tradie->first_name . ' ' . $tradie->middle_name . ' ' . $tradie->last_name);
+        
         return response()->json([
             'success' => true,
             'data' => [
                 'user' => [
                     'id' => $tradie->id,
+                    'name' => $fullName,
                     'first_name' => $tradie->first_name,
                     'last_name' => $tradie->last_name,
                     'middle_name' => $tradie->middle_name,
@@ -188,12 +204,15 @@ class TradieAuthController extends Controller
     {
         $tradie = $request->user();
 
+        // Build full name
+        $fullName = trim($tradie->first_name . ' ' . $tradie->middle_name . ' ' . $tradie->last_name);
+        
         return response()->json([
             'success' => true,
             'data' => [
                 'user' => [
                     'id' => $tradie->id,
-                    'name' => $tradie->name,
+                    'name' => $fullName,
                     'email' => $tradie->email,
                     'phone' => $tradie->phone,
                     'avatar' => $tradie->avatar,

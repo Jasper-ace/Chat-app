@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../core/services/auth_service.dart';
-import '../../chat/widgets/chat_helpers.dart';
+import 'package:go_router/go_router.dart';
 
 class HomeownerAuthService {
-  final AuthService _authService = AuthService();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   // Register homeowner
   Future<UserCredential?> registerHomeowner({
@@ -15,13 +15,27 @@ class HomeownerAuthService {
     String? phone,
     Map<String, dynamic>? additionalData,
   }) async {
-    return await _authService.registerWithEmailAndPassword(
-      email: email,
-      password: password,
-      name: name,
-      userType: 'homeowner',
-      additionalData: additionalData,
-    );
+    try {
+      final credential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      // Save to Firestore
+      await _firestore.collection('homeowners').doc(credential.user!.uid).set({
+        'name': name,
+        'email': email,
+        'phone': phone,
+        'userType': 'homeowner',
+        'createdAt': FieldValue.serverTimestamp(),
+        ...?additionalData,
+      });
+
+      return credential;
+    } catch (e) {
+      print('Register error: $e');
+      return null;
+    }
   }
 
   // Sign in homeowner
@@ -29,41 +43,50 @@ class HomeownerAuthService {
     required String email,
     required String password,
   }) async {
-    return await _authService.signInWithEmailAndPassword(
-      email: email,
-      password: password,
-      expectedUserType: 'homeowner',
-    );
+    try {
+      return await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+    } catch (e) {
+      print('Sign in error: $e');
+      return null;
+    }
   }
 
   // Get current user
-  User? get currentUser => _authService.currentUser;
+  User? get currentUser => _auth.currentUser;
 
   // Auth state changes
-  Stream<User?> get authStateChanges => _authService.authStateChanges;
+  Stream<User?> get authStateChanges => _auth.authStateChanges();
 
   // Sign out
   Future<void> signOut() async {
-    await _authService.signOut();
+    await _auth.signOut();
   }
 
   // Get homeowner data
   Future<DocumentSnapshot?> getHomeownerData() async {
-    return await _authService.getUserData('homeowner');
+    final user = _auth.currentUser;
+    if (user == null) return null;
+    return await _firestore.collection('homeowners').doc(user.uid).get();
   }
 
   // Update homeowner data
   Future<void> updateHomeownerData(Map<String, dynamic> data) async {
-    await _authService.updateUserData(userType: 'homeowner', data: data);
+    final user = _auth.currentUser;
+    if (user == null) return;
+    await _firestore.collection('homeowners').doc(user.uid).update(data);
   }
 
   // Check if user exists as homeowner
   Future<bool> homeownerExists(String uid) async {
-    return await _authService.userExistsInCollection(uid, 'homeowner');
+    final doc = await _firestore.collection('homeowners').doc(uid).get();
+    return doc.exists;
   }
 
   // Open chat for homeowner
   void openChat(BuildContext context, int currentUserId) {
-    ChatHelpers.openChatList(context, 'homeowner', currentUserId);
+    context.push('/chats');
   }
 }

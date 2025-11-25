@@ -4,6 +4,9 @@ import '../../features/auth/views/firebase_login_screen.dart';
 import '../../features/auth/views/register_screen.dart';
 import '../../features/auth/views/firebase_dashboard_screen.dart';
 import '../../features/auth/viewmodels/firebase_auth_viewmodel.dart';
+import '../../features/chat/views/chat_list_screen.dart';
+import '../../features/chat/views/chat_screen.dart';
+import '../../features/chat/views/select_user_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(firebaseAuthViewModelProvider);
@@ -39,6 +42,27 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/dashboard',
         builder: (context, state) => const FirebaseDashboardScreen(),
+      ),
+      GoRoute(
+        path: '/chats',
+        builder: (context, state) => const ChatListScreen(),
+      ),
+      GoRoute(
+        path: '/chat/new',
+        builder: (context, state) => const SelectUserScreen(),
+      ),
+      GoRoute(
+        path: '/chat/:chatId',
+        builder: (context, state) {
+          final chatId = state.pathParameters['chatId']!;
+          final extra = state.extra as Map<String, dynamic>?;
+          return ChatScreen(
+            chatId: chatId,
+            otherUserName: extra?['otherUserName'] ?? 'User',
+            otherUserId: extra?['otherUserId'] ?? '',
+            otherUserType: extra?['otherUserType'] ?? 'tradie',
+          );
+        },
       ),
     ],
   );

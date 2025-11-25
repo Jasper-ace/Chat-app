@@ -71,11 +71,14 @@ Route::prefix('tradies')->group(function () {
     Route::post('search', [TradieController::class, 'search']);
 });
 
-// Chat API Routes
+// Chat API Routes (Laravel controls Firestore writes)
 Route::prefix('chats')->group(function () {
     Route::get('user-chats', [ChatController::class, 'getUserChats']);
     Route::get('{chat_id}/messages', [ChatController::class, 'getChatMessages']);
-    Route::post('send-message', [ChatController::class, 'sendMessage']);
+    Route::post('send-message', [ChatController::class, 'sendMessage']); // Laravel writes to Firestore
+    Route::post('create-room', [ChatController::class, 'createRoom']); // Create chat room
+    Route::post('block-user', [ChatController::class, 'blockUser']); // Block user
+    Route::post('unblock-user', [ChatController::class, 'unblockUser']); // Unblock user
     Route::post('mark-as-read', [ChatController::class, 'markAsRead']);
     Route::get('stats', [ChatController::class, 'getChatStats']);
     Route::post('search-messages', [ChatController::class, 'searchMessages']);

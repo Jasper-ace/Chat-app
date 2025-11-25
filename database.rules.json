@@ -1,0 +1,30 @@
+{
+  "rules": {
+    "threads": {
+      ".read": true,
+      ".write": false,
+      ".indexOn": ["tradie_id", "homeowner_id"],
+      "$threadId": {
+        "messages": {
+          ".read": true,
+          ".write": false
+        }
+      }
+    },
+    "userProfiles": {
+      ".read": true,
+      ".write": false,
+      "$userId": {
+        ".indexOn": ["blockedUsers"]
+      }
+    },
+    "counters": {
+      ".read": true,
+      ".write": false
+    },
+    "test": {
+      ".read": true,
+      ".write": false
+    }
+  }
+}

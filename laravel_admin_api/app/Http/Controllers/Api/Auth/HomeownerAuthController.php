@@ -36,8 +36,16 @@ class HomeownerAuthController extends Controller
         }
 
         try {
+            // Split name into first, middle, last
+            $nameParts = explode(' ', trim($request->name));
+            $firstName = $nameParts[0] ?? '';
+            $lastName = count($nameParts) > 1 ? array_pop($nameParts) : '';
+            $middleName = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : '';
+            
             $homeowner = Homeowner::create([
-                'name' => $request->name,
+                'first_name' => $firstName,
+                'middle_name' => $middleName,
+                'last_name' => $lastName,
                 'email' => $request->email,
                 'phone' => $request->phone,
                 'password' => Hash::make($request->password),
@@ -50,12 +58,18 @@ class HomeownerAuthController extends Controller
 
             $token = $homeowner->createToken('homeowner-token')->plainTextToken;
 
+            // Build full name
+            $fullName = trim($homeowner->first_name . ' ' . $homeowner->middle_name . ' ' . $homeowner->last_name);
+
             return response()->json([
                 'success' => true,
                 'data' => [
                     'user' => [
                         'id' => $homeowner->id,
-                        'name' => $homeowner->name,
+                        'name' => $fullName,
+                        'first_name' => $homeowner->first_name,
+                        'middle_name' => $homeowner->middle_name,
+                        'last_name' => $homeowner->last_name,
                         'email' => $homeowner->email,
                         'phone' => $homeowner->phone,
                         'address' => $homeowner->address,
@@ -125,12 +139,15 @@ class HomeownerAuthController extends Controller
 
         $token = $homeowner->createToken('homeowner-token')->plainTextToken;
 
+        // Build full name
+        $fullName = trim($homeowner->first_name . ' ' . $homeowner->middle_name . ' ' . $homeowner->last_name);
+        
         return response()->json([
             'success' => true,
             'data' => [
                 'user' => [
                     'id' => $homeowner->id,
-                    'name' => $homeowner->name,
+                    'name' => $fullName,
                     'email' => $homeowner->email,
                     'phone' => $homeowner->phone,
                     'address' => $homeowner->address,
@@ -159,12 +176,15 @@ class HomeownerAuthController extends Controller
     {
         $homeowner = $request->user();
 
+        // Build full name
+        $fullName = trim($homeowner->first_name . ' ' . $homeowner->middle_name . ' ' . $homeowner->last_name);
+        
         return response()->json([
             'success' => true,
             'data' => [
                 'user' => [
                     'id' => $homeowner->id,
-                    'name' => $homeowner->name,
+                    'name' => $fullName,
                     'email' => $homeowner->email,
                     'phone' => $homeowner->phone,
                     'avatar' => $homeowner->avatar,

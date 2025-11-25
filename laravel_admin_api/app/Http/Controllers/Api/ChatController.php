@@ -118,17 +118,16 @@ class ChatController extends Controller
     }
 
     /**
-     * Send a message (saves to both MySQL and Firebase)
+     * Send a message (Laravel writes to Firestore, Flutter reads)
      */
     public function sendMessage(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'sender_firebase_uid' => 'required|string',
-            'receiver_firebase_uid' => 'required|string',
+            'sender_id' => 'required|integer',
+            'receiver_id' => 'required|integer',
             'sender_type' => 'required|in:homeowner,tradie',
             'receiver_type' => 'required|in:homeowner,tradie',
             'message' => 'required|string|max:5000',
-            'metadata' => 'nullable|array',
         ]);
 
         if ($validator->fails()) {
@@ -140,9 +139,28 @@ class ChatController extends Controller
         }
 
         try {
-            $result = $this->firebaseService->saveMessage($request->all());
+            // Use new Firestore service
+            $firestoreService = app(\App\Services\FirestoreChatService::class);
+            
+            $result = $firestoreService->sendMessage([
+                'sender_id' => $request->sender_id,
+                'receiver_id' => $request->receiver_id,
+                'sender_type' => $request->sender_type,
+                'receiver_type' => $request->receiver_type,
+                'message' => $request->message,
+            ]);
 
             if ($result['success']) {
+                // Also save to MySQL for backup/analytics
+                Message::create([
+                    'sender_firebase_uid' => (string) $request->sender_id,
+                    'receiver_firebase_uid' => (string) $request->receiver_id,
+                    'sender_type' => $request->sender_type,
+                    'receiver_type' => $request->receiver_type,
+                    'message' => $request->message,
+                    'sent_at' => now(),
+                ]);
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Message sent successfully',
@@ -160,7 +178,8 @@ class ChatController extends Controller
             Log::error('Send message error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Internal server error'
+                'message' => 'Internal server error',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
@@ -337,6 +356,147 @@ class ChatController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Sync Firebase messages error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Create or get chat room
+     */
+    public function createRoom(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'tradie_id' => 'required|integer',
+            'homeowner_id' => 'required|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $firestoreService = app(\App\Services\FirestoreChatService::class);
+            
+            $result = $firestoreService->createRoom([
+                'tradie_id' => $request->tradie_id,
+                'homeowner_id' => $request->homeowner_id,
+            ]);
+
+            if ($result['success']) {
+                return response()->json([
+                    'success' => true,
+                    'data' => $result
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create room'
+            ], 500);
+
+        } catch (\Exception $e) {
+            Log::error('Create room error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Block user
+     */
+    public function blockUser(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'blocker_id' => 'required|integer',
+            'blocked_id' => 'required|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $firestoreService = app(\App\Services\FirestoreChatService::class);
+            
+            $result = $firestoreService->blockUser(
+                $request->blocker_id,
+                $request->blocked_id
+            );
+
+            if ($result['success']) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'User blocked successfully'
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to block user'
+            ], 500);
+
+        } catch (\Exception $e) {
+            Log::error('Block user error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
+     * Unblock user
+     */
+    public function unblockUser(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'blocker_id' => 'required|integer',
+            'blocked_id' => 'required|integer',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $firestoreService = app(\App\Services\FirestoreChatService::class);
+            
+            $result = $firestoreService->unblockUser(
+                $request->blocker_id,
+                $request->blocked_id
+            );
+
+            if ($result['success']) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'User unblocked successfully'
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to unblock user'
+            ], 500);
+
+        } catch (\Exception $e) {
+            Log::error('Unblock user error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Internal server error'

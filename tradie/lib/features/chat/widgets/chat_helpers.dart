@@ -1,42 +1,31 @@
 import 'package:flutter/material.dart';
-import '../views/chat_list_screen.dart';
-import '../views/chat_screen.dart';
-import '../models/user_model.dart';
+import 'package:go_router/go_router.dart';
 
 class ChatHelpers {
-  // Open chat list for a specific user type
+  // Open chat list
   static void openChatList(
     BuildContext context,
     String userType,
     int currentUserId,
   ) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChatListScreen(
-          currentUserType: userType,
-          currentUserId: currentUserId,
-        ),
-      ),
-    );
+    context.push('/chats');
   }
 
   // Open direct chat with another user
   static void openChat(
     BuildContext context, {
-    required String currentUserType,
-    required int currentUserId,
-    required UserModel otherUser,
+    required String chatId,
+    required String otherUserName,
+    required String otherUserId,
+    required String otherUserType,
   }) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChatScreen(
-          otherUser: otherUser,
-          currentUserType: currentUserType,
-          currentUserId: currentUserId,
-        ),
-      ),
+    context.push(
+      '/chat/$chatId',
+      extra: {
+        'otherUserName': otherUserName,
+        'otherUserId': otherUserId,
+        'otherUserType': otherUserType,
+      },
     );
   }
 

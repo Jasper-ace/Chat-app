@@ -1,650 +1,213 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_database/firebase_database.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_dimensions.dart';
+import '../../../core/theme/app_text_styles.dart';
+import '../services/chat_api_service.dart';
+import '../../auth/services/tradie_api_auth_service.dart';
 
-import 'package:flutter/services.dart';
-
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-import 'package:firebase_auth/firebase_auth.dart';
-
-import '../repositories/chat_repository.dart';
-
-import '../repositories/thread_repository.dart';
-
-import '../services/current_user_service.dart';
-
-import '../services/message_status_service.dart';
-
-import '../services/thread_message_service.dart';
-
-import '../repositories/conversation_repository.dart';
-
-import '../models/user_model.dart';
-
-import '../models/message_model.dart';
-
-class ChatScreen extends StatefulWidget {
-  final UserModel otherUser;
-
-  final String currentUserType; // Should be 'tradie' for this screen
-
-  final int currentUserId;
+class ChatScreen extends ConsumerStatefulWidget {
+  final String chatId;
+  final String otherUserName;
+  final String otherUserId;
+  final String otherUserType;
 
   const ChatScreen({
     super.key,
-
-    required this.otherUser,
-
-    required this.currentUserType,
-
-    required this.currentUserId,
+    required this.chatId,
+    required this.otherUserName,
+    required this.otherUserId,
+    required this.otherUserType,
   });
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
-  final ChatService _chatService = ChatService();
+class _ChatScreenState extends ConsumerState<ChatScreen> {
+  final _messageController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _authService = TradieApiAuthService();
+  final _chatService = ChatApiService();
 
-  final UnifiedThreadService _threadService = UnifiedThreadService();
-
-  final TextEditingController _messageController = TextEditingController();
-
-  final ScrollController _scrollController = ScrollController();
-
-  int? _actualCurrentUserId;
-
-  MessageModel? _replyToMessage;
-
-  bool _isUserBlocked = false;
-
-  bool _isBlockedByUser = false;
-
-  bool _isOnline = false;
-
-  DateTime? _lastSeen;
-
-  // Cache the messages stream to prevent multiple calls
-  Stream<QuerySnapshot>? _cachedMessagesStream;
+  List<Map<String, dynamic>> _messages = [];
+  bool _isLoading = true;
+  bool _isSending = false;
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
-
-    _initializeCurrentUserId();
-
-    _checkBlockStatus();
-
-    _listenToBlockingStatus();
-
-    _markConversationAsRead();
-
-    _listenToOnlineStatus();
-
-    _updateMyOnlineStatus(true);
+    print('🔥🔥🔥 ChatScreen initialized with chatId: ${widget.chatId}');
+    print('🔥🔥🔥 Other user: ${widget.otherUserName}');
+    _initChat();
   }
 
-  // --- Utility & Thread ID Logic (New/Modified for unified thread) ---
+  Future<void> _initChat() async {
+    _currentUserId = (await _authService.getUserId())?.toString();
+    print('🔥🔥🔥 Current user ID: $_currentUserId');
+    _listenToMessages();
+  }
 
-  Future<void> _initializeCurrentUserId() async {
-    try {
-      final autoId = await CurrentUserService.getCurrentUserAutoId();
+  void _listenToMessages() {
+    print('🔥🔥🔥 Listening to Firebase path: threads/${widget.chatId}');
+    print('🔥🔥🔥 Chat ID received: ${widget.chatId}');
 
-      if (mounted) {
+    // Listen to the specific thread
+    final messagesRef = FirebaseDatabase.instance.ref(
+      'threads/${widget.chatId}',
+    );
+
+    messagesRef.onValue.listen(
+      (event) {
+        print('🔥 Firebase event received');
+        print('🔥 Snapshot exists: ${event.snapshot.exists}');
+        print('🔥 Snapshot value type: ${event.snapshot.value.runtimeType}');
+
+        if (event.snapshot.value != null) {
+          final data = event.snapshot.value as Map<dynamic, dynamic>;
+          final messages = <Map<String, dynamic>>[];
+
+          print('🔥 Thread data keys: ${data.keys.toList()}');
+          print('🔥 Full thread data: $data');
+
+          // Check if messages node exists
+          if (data.containsKey('messages')) {
+            final messagesData = data['messages'] as Map<dynamic, dynamic>;
+            print(
+              '🔥 Messages node found with ${messagesData.length} messages',
+            );
+            print('🔥 Messages data: $messagesData');
+
+            messagesData.forEach((key, value) {
+              print(
+                '🔥 Processing message key: $key, value type: ${value.runtimeType}',
+              );
+              if (value is Map) {
+                final message = Map<String, dynamic>.from(value as Map);
+                message['id'] = key;
+                messages.add(message);
+                print(
+                  '🔥 Added message: $key with content: ${message['content']}',
+                );
+              }
+            });
+          } else {
+            print('🔥 No messages node found in thread data');
+            print('🔥 Available keys: ${data.keys.toList()}');
+          }
+
+          // Sort by date
+          messages.sort((a, b) {
+            final aTime = a['date'] ?? 0;
+            final bTime = b['date'] ?? 0;
+            return aTime.compareTo(bTime);
+          });
+
+          print('🔥 Total messages for this chat: ${messages.length}');
+          if (messages.isNotEmpty) {
+            print('🔥 First message: ${messages.first}');
+          }
+
+          setState(() {
+            _messages = messages;
+            _isLoading = false;
+          });
+
+          // Scroll to bottom
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.animateTo(
+                _scrollController.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+        } else {
+          print('🔥 Snapshot value is null');
+          setState(() {
+            _messages = [];
+            _isLoading = false;
+          });
+        }
+      },
+      onError: (error) {
+        print('❌ Firebase listener error: $error');
         setState(() {
-          _actualCurrentUserId = autoId;
+          _isLoading = false;
         });
-      }
-    } catch (e) {
-      print('Error getting current user ID: $e');
-    }
+      },
+    );
   }
 
-  int get currentUserIdAsInt {
-    return _actualCurrentUserId ?? widget.currentUserId;
-  }
+  Future<void> _sendMessage() async {
+    if (_messageController.text.trim().isEmpty || _isSending) return;
 
-  // --- Message Sending & Receiving ---
-
-  Stream<QuerySnapshot> _getMessagesStream() {
-    // Return cached stream if already created
-    if (_cachedMessagesStream != null) {
-      return _cachedMessagesStream!;
-    }
-
-    if (widget.otherUser.autoId != null && currentUserIdAsInt != 0) {
-      print('🔍 TRADIE: Creating messages stream (first time only)');
-
-      _cachedMessagesStream = _threadService
-          .getMessages(
-            currentUserId: currentUserIdAsInt,
-            currentUserType: widget.currentUserType,
-            otherUserId: widget.otherUser.autoId!,
-            otherUserType: widget.otherUser.userType,
-          )
-          .handleError((error) {
-            print('Error in messages stream: $error');
-          });
-    } else {
-      print('🔍 TRADIE: Creating fallback messages stream');
-      _cachedMessagesStream = _chatService
-          .getMessages(widget.otherUser.id)
-          .handleError((error) {
-            print('Error in messages stream (Legacy): $error');
-          });
-    }
-
-    return _cachedMessagesStream!;
-  }
-
-  void _markConversationAsRead() {
-    try {
-      ConversationStateService.markAsRead(widget.otherUser.id);
-    } catch (e) {
-      print('Error marking conversation as read: $e');
-    }
-  }
-
-  void _sendMessage() async {
-    final message = _messageController.text.trim();
-
-    if (message.isEmpty) return;
-
-    // Quick blocking check using existing state (no await needed)
-    if (_isUserBlocked || _isBlockedByUser) {
-      print(
-        '🚫 TRADIE: Message blocked - isUserBlocked=$_isUserBlocked, isBlockedByUser=$_isBlockedByUser',
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _isUserBlocked
-                  ? 'You have blocked this user'
-                  : 'This user has blocked you',
-            ),
-
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-
-      return;
-    }
-
-    final messageToSend = message;
-
-    // Clear UI immediately for instant feedback
+    final messageText = _messageController.text.trim();
     _messageController.clear();
 
-    _clearReply();
+    setState(() => _isSending = true);
 
-    // Send message in background without blocking UI
-    _sendMessageInBackground(messageToSend);
-
-    // Scroll to bottom immediately for better UX
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        0,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
-    }
-  }
-
-  void _sendMessageInBackground(String messageToSend) async {
     try {
-      if (widget.otherUser.autoId != null && currentUserIdAsInt != 0) {
-        print('📤 TRADIE: Sending message via unified thread service');
-
-        await _threadService.sendMessage(
-          senderId: currentUserIdAsInt,
-          senderType: widget.currentUserType,
-          receiverId: widget.otherUser.autoId!,
-          receiverType: widget.otherUser.userType,
-          content: messageToSend,
-        );
-
-        print('✅ TRADIE: Message sent successfully');
-      } else {
-        print('📤 TRADIE: Using fallback chat service');
-        await _chatService.sendMessage(
-          receiverId: widget.otherUser.id,
-          message: messageToSend,
-          senderUserType: widget.currentUserType,
-          receiverUserType: widget.otherUser.userType,
-        );
-        print('✅ TRADIE: Fallback message sent');
+      final userId = await _authService.getUserId();
+      if (userId == null) {
+        throw Exception('User not authenticated');
       }
-    } catch (e) {
-      print('❌ Error sending message: $e');
 
-      // Show error and restore message if sending failed
-      if (mounted) {
-        _messageController.text = messageToSend;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send message. Please try again.'),
-            backgroundColor: Colors.red,
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _sendMessageInBackground(messageToSend),
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  // --- Blocking Logic ---
-
-  Future<void> _checkBlockStatus() async {
-    try {
-      print(
-        '🔍 TRADIE: Checking block status for user: ${widget.otherUser.id}',
+      await _chatService.sendMessage(
+        chatId: widget.chatId,
+        senderId: userId.toString(),
+        senderType: 'tradie',
+        receiverId: widget.otherUserId,
+        receiverType: widget.otherUserType,
+        message: messageText,
       );
-
-      final isBlocked = await ConversationStateService.isUserBlocked(
-        widget.otherUser.id,
-      );
-
-      final isBlockedByUser = await ConversationStateService.isBlockedByUser(
-        widget.otherUser.id,
-      );
-
-      print(
-        '🔍 TRADIE: isBlocked=$isBlocked, isBlockedByUser=$isBlockedByUser',
-      );
-
-      if (mounted) {
-        final oldIsUserBlocked = _isUserBlocked;
-
-        final oldIsBlockedByUser = _isBlockedByUser;
-
-        setState(() {
-          _isUserBlocked = isBlocked;
-
-          _isBlockedByUser = isBlockedByUser;
-        });
-
-        if (oldIsUserBlocked != isBlocked ||
-            oldIsBlockedByUser != isBlockedByUser) {
-          print(
-            '🔄 TRADIE: Blocking status CHANGED - isUserBlocked=$_isUserBlocked, isBlockedByUser=$_isBlockedByUser',
-          );
-
-          // Force UI refresh
-
-          if (mounted) {
-            setState(() {});
-          }
-        }
-      }
-    } catch (e) {
-      print('❌ Error checking block status: $e');
-    }
-  }
-
-  void _listenToBlockingStatus() {
-    // Listen to real-time blocking status changes from current user
-
-    ConversationStateService.getUserPreferencesStream()
-        .listen((preferences) {
-          if (mounted) {
-            final blockedUsers = List<String>.from(
-              preferences['blockedUsers'] ?? [],
-            );
-
-            final isBlocked = blockedUsers.contains(widget.otherUser.id);
-
-            if (_isUserBlocked != isBlocked) {
-              setState(() {
-                _isUserBlocked = isBlocked;
-              });
-
-              // Show feedback when blocking status changes
-
-              if (isBlocked) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${widget.otherUser.name} has been blocked'),
-
-                    backgroundColor: Colors.orange,
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      '${widget.otherUser.name} has been unblocked',
-                    ),
-
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            }
-
-            // Also check if we're blocked by the user (this requires a separate check)
-
-            _checkIfBlockedByUser();
-          }
-        })
-        .onError((error) {
-          print('Error listening to blocking status: $error');
-        });
-
-    // Also listen to the other user's userProfiles to detect when they block us
-
-    _listenToOtherUserBlocking();
-
-    // Refresh blocking status every 2 seconds to ensure sync
-
-    Timer.periodic(const Duration(seconds: 3600), (timer) {
-      if (mounted) {
-        _checkBlockStatus();
-      } else {
-        timer.cancel();
-      }
-    });
-  }
-
-  Future<void> _checkIfBlockedByUser() async {
-    try {
-      final isBlockedByUser = await ConversationStateService.isBlockedByUser(
-        widget.otherUser.id,
-      );
-
-      if (mounted && _isBlockedByUser != isBlockedByUser) {
-        setState(() {
-          _isBlockedByUser = isBlockedByUser;
-        });
-      }
-    } catch (e) {
-      print('Error checking if blocked by user: $e');
-    }
-  }
-
-  void _listenToOnlineStatus() {
-    // Listen to homeowner's online status
-
-    FirebaseFirestore.instance
-        .collection('userStatus')
-        .doc(widget.otherUser.id)
-        .snapshots()
-        .listen((doc) {
-          if (mounted && doc.exists) {
-            final data = doc.data() as Map<String, dynamic>;
-
-            final isOnline = data['isOnline'] ?? false;
-
-            final lastSeen = data['lastSeen'] as Timestamp?;
-
-            setState(() {
-              _isOnline = isOnline;
-
-              _lastSeen = lastSeen?.toDate();
-            });
-
-            print(
-              '🟢 TRADIE: Online status updated - isOnline=$isOnline, lastSeen=$_lastSeen',
-            );
-          }
-        })
-        .onError((error) {
-          print('Error listening to online status: $error');
-        });
-  }
-
-  String _getLastSeenText() {
-    if (_lastSeen == null) return 'Offline';
-
-    final now = DateTime.now();
-
-    final difference = now.difference(_lastSeen!);
-
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inMinutes < 60) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inHours < 24) {
-      return '${difference.inHours}h ago';
-    } else {
-      return '${difference.inDays}d ago';
-    }
-  }
-
-  void _updateMyOnlineStatus(bool isOnline) {
-    final currentUser = FirebaseAuth.instance.currentUser;
-
-    if (currentUser != null) {
-      print('🟢 TRADIE: Updating my online status to: $isOnline');
-
-      FirebaseFirestore.instance
-          .collection('userStatus')
-          .doc(currentUser.uid)
-          .set({
-            'isOnline': isOnline,
-
-            'lastSeen': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true))
-          .then((_) {
-            print('✅ TRADIE: Online status updated successfully');
-          })
-          .catchError((error) {
-            print('❌ TRADIE: Error updating online status: $error');
-          });
-    }
-  }
-
-  void _listenToOtherUserBlocking() {
-    // Listen to the other user's userProfiles to detect when they block us
-
-    FirebaseFirestore.instance
-        .collection('userProfiles')
-        .doc(widget.otherUser.id)
-        .snapshots()
-        .listen((doc) {
-          if (mounted && doc.exists) {
-            final data = doc.data() as Map<String, dynamic>;
-
-            final blockedUsers = List<String>.from(data['blockedUsers'] ?? []);
-
-            final currentUser = FirebaseAuth.instance.currentUser;
-
-            if (currentUser != null) {
-              final isBlockedByUser = blockedUsers.contains(currentUser.uid);
-
-              if (_isBlockedByUser != isBlockedByUser) {
-                setState(() {
-                  _isBlockedByUser = isBlockedByUser;
-                });
-
-                print(
-                  '🔄 TRADIE: Blocking status changed - isBlockedByUser=$isBlockedByUser',
-                );
-              }
-            }
-          }
-        })
-        .onError((error) {
-          print('Error listening to other user blocking: $error');
-        });
-  }
-
-  void _toggleBlockUser() async {
-    try {
-      if (_isUserBlocked) {
-        // Unblock user
-
-        await ConversationStateService.unblockUser(widget.otherUser.id);
-
-        if (mounted) {
-          setState(() {
-            _isUserBlocked = false;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${widget.otherUser.name} has been unblocked'),
-
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        // Block user - show confirmation
-
-        final shouldBlock = await showDialog<bool>(
-          context: context,
-
-          builder: (context) => AlertDialog(
-            title: const Text('Block User'),
-
-            content: Text(
-              'Are you sure you want to block ${widget.otherUser.name}? You won\'t be able to send or receive messages from them.',
-            ),
-
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-
-                child: const Text('Cancel'),
-              ),
-
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-
-                child: const Text('Block'),
-              ),
-            ],
-          ),
-        );
-
-        if (shouldBlock == true) {
-          await ConversationStateService.blockUser(
-            widget.otherUser.id,
-
-            widget.otherUser.userType,
-          );
-
-          if (mounted) {
-            setState(() {
-              _isUserBlocked = true;
-            });
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('${widget.otherUser.name} has been blocked'),
-
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
-        }
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        ).showSnackBar(SnackBar(content: Text('Failed to send message: $e')));
       }
+    } finally {
+      setState(() => _isSending = false);
     }
   }
 
-  // --- UI Build Methods ---
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF4A90E2),
-
-        foregroundColor: Colors.white,
-
-        elevation: 0,
-
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-
-          onPressed: () => Navigator.pop(context),
-        ),
-
         title: Row(
           children: [
             CircleAvatar(
-              radius: 20,
-
-              backgroundColor: Colors.white,
-
-              child: CircleAvatar(
-                radius: 18,
-
-                backgroundColor: Colors.grey[300],
-
-                backgroundImage: widget.otherUser.name.isNotEmpty
-                    ? null
-                    : const AssetImage('assets/default_avatar.png'),
-
-                child: widget.otherUser.name.isNotEmpty
-                    ? Text(
-                        widget.otherUser.name[0].toUpperCase(),
-
-                        style: const TextStyle(
-                          color: Colors.white,
-
-                          fontWeight: FontWeight.bold,
-
-                          fontSize: 16,
-                        ),
-                      )
-                    : null,
+              backgroundColor: AppColors.primary,
+              child: Text(
+                widget.otherUserName.substring(0, 1).toUpperCase(),
+                style: const TextStyle(color: Colors.white),
               ),
             ),
-
-            const SizedBox(width: 12),
-
+            const SizedBox(width: AppDimensions.spacing12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-
                 children: [
+                  Text(widget.otherUserName, style: AppTextStyles.titleMedium),
                   Text(
-                    widget.otherUser.name.isNotEmpty
-                        ? widget.otherUser.name
-                        : 'Unknown User',
-
-                    style: const TextStyle(
-                      fontSize: 18,
-
-                      fontWeight: FontWeight.w600,
-
-                      color: Colors.white,
-                    ),
-                  ),
-
-                  Text(
-                    (_isUserBlocked || _isBlockedByUser)
-                        ? 'Blocked'
-                        : _isOnline
-                        ? 'Online'
-                        : _getLastSeenText(),
-
-                    style: TextStyle(
-                      fontSize: 14,
-
-                      color: (_isUserBlocked || _isBlockedByUser)
-                          ? Colors.red[300]
-                          : _isOnline
-                          ? Colors.green[300]
-                          : Colors.white.withOpacity(0.8),
+                    widget.otherUserType == 'homeowner'
+                        ? 'Homeowner'
+                        : 'Tradie',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.onSurfaceVariant,
                     ),
                   ),
                 ],
@@ -652,1562 +215,52 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-
         actions: [
           IconButton(
-            icon: const Icon(Icons.more_vert, color: Colors.white),
+            icon: const Icon(Icons.more_vert),
             onPressed: () {
-              _showChatOptions();
+              // Show options menu
             },
           ),
         ],
       ),
-
       body: Column(
         children: [
-          // Messages
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              key: ValueKey(
-                'messages_${widget.otherUser.id}_${widget.otherUser.autoId}',
-              ),
-
-              stream: _getMessagesStream(),
-
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-
-                      children: [
-                        Icon(
-                          Icons.error_outline,
-
-                          size: 64,
-
-                          color: Colors.grey[400],
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        Text('Error loading messages'),
-
-                        const SizedBox(height: 8),
-
-                        Container(
-                          padding: const EdgeInsets.all(16),
-
-                          margin: const EdgeInsets.symmetric(horizontal: 16),
-
-                          decoration: BoxDecoration(
-                            color: Colors.red[50],
-
-                            borderRadius: BorderRadius.circular(8),
-
-                            border: Border.all(color: Colors.red[200]!),
-                          ),
-
-                          child: Text(
-                            '${snapshot.error}',
-
-                            style: const TextStyle(fontSize: 12),
-
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {}); // Refresh
-                          },
-
-                          child: const Text('Retry'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                if (!snapshot.hasData) {
-                  return const SizedBox.shrink(); // Show nothing while loading
-                }
-
-                if (snapshot.data!.docs.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'No messages yet',
-                      style: TextStyle(color: Colors.grey[600], fontSize: 16),
-                    ),
-                  );
-                }
-
-                final allMessages = snapshot.data!.docs
-                    .map((doc) => MessageModel.fromFirestore(doc))
-                    .toList();
-
-                // Filter out messages deleted by current user
-
-                final messages = allMessages.where((message) {
-                  final messageDoc = snapshot.data!.docs.firstWhere(
-                    (doc) => doc.id == message.id,
-                  );
-
-                  final messageData = messageDoc.data() as Map<String, dynamic>;
-
-                  // Check if message is deleted for current user
-
-                  final deletedFor =
-                      messageData['deletedFor'] as List<dynamic>?;
-
-                  if (deletedFor != null &&
-                      deletedFor.contains(currentUserIdAsInt.toString())) {
-                    return false; // Hide message deleted by current user
-                  }
-
-                  return true; // Show message
-                }).toList()..sort((a, b) => b.date.compareTo(a.date));
-
-                return ListView.builder(
-                  controller: _scrollController,
-
-                  reverse: true,
-
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-
-                    vertical: 8,
-                  ),
-
-                  itemCount: messages.length,
-
-                  itemBuilder: (context, index) {
-                    final message = messages[index];
-
-                    final isMe =
-                        message.senderId == currentUserIdAsInt ||
-                        message.senderType == widget.currentUserType;
-
-                    return _buildMessageBubble(message, isMe);
-                  },
-                );
-              },
-            ),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _messages.isEmpty
+                ? _buildEmptyState()
+                : _buildMessageList(),
           ),
-
-          // Reply preview (only show if not blocked)
-          if (!_isUserBlocked && !_isBlockedByUser && _replyToMessage != null)
-            _buildReplyPreview(),
-
-          // Blocked user warning or message input
-          (_isUserBlocked || _isBlockedByUser)
-              ? _buildBlockedUserWarning()
-              : _buildMessageInput(),
+          _buildMessageInput(),
         ],
       ),
     );
   }
 
-  Widget _buildMessageBubble(MessageModel message, bool isMe) {
-    // Check if this is a reply message
-
-    final isReply = message.replyTo != null;
-
-    final replyInfo = message.replyTo;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-
+  Widget _buildEmptyState() {
+    return Center(
       child: Column(
-        crossAxisAlignment: isMe
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
-
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Row(
-            mainAxisAlignment: isMe
-                ? MainAxisAlignment.end
-                : MainAxisAlignment.start,
-
-            crossAxisAlignment: CrossAxisAlignment.end,
-
-            children: [
-              if (isMe) const Spacer(flex: 1),
-
-              Flexible(
-                flex: 3,
-
-                child: GestureDetector(
-                  onLongPress: (_isUserBlocked || _isBlockedByUser)
-                      ? null
-                      : () => _showMessageOptions(message, isMe),
-
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-
-                      vertical: 12,
-                    ),
-
-                    decoration: BoxDecoration(
-                      color: isMe
-                          ? const Color(0xFF2C2C2C)
-                          : const Color(0xFFE3F2FD),
-
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(20),
-
-                        topRight: const Radius.circular(20),
-
-                        bottomLeft: isMe
-                            ? const Radius.circular(20)
-                            : const Radius.circular(4),
-
-                        bottomRight: isMe
-                            ? const Radius.circular(4)
-                            : const Radius.circular(20),
-                      ),
-                    ),
-
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-
-                      children: [
-                        // Reply preview if this is a reply
-                        if (isReply && replyInfo != null)
-                          Container(
-                            padding: const EdgeInsets.all(8),
-
-                            margin: const EdgeInsets.only(bottom: 8),
-
-                            decoration: BoxDecoration(
-                              color: isMe
-                                  ? Colors.white.withOpacity(0.1)
-                                  : Colors.grey.withOpacity(0.2),
-
-                              borderRadius: BorderRadius.circular(8),
-
-                              border: Border(
-                                left: BorderSide(
-                                  color: isMe
-                                      ? Colors.white
-                                      : const Color(0xFF4A90E2),
-
-                                  width: 3,
-                                ),
-                              ),
-                            ),
-
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-
-                              children: [
-                                Text(
-                                  // Displaying the sender type of the replied message
-                                  'Replying to ${replyInfo['sender_type']}',
-
-                                  style: TextStyle(
-                                    color: isMe
-                                        ? Colors.white.withOpacity(0.7)
-                                        : Colors.grey[600],
-
-                                    fontSize: 12,
-
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-
-                                const SizedBox(height: 2),
-
-                                Text(
-                                  replyInfo['content'] ?? '',
-
-                                  style: TextStyle(
-                                    color: isMe
-                                        ? Colors.white.withOpacity(0.8)
-                                        : Colors.grey[700],
-
-                                    fontSize: 13,
-                                  ),
-
-                                  maxLines: 2,
-
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-
-                        // Main message content
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              message.isUnsent
-                                  ? 'This message was unsent'
-                                  : message.content,
-                              style: TextStyle(
-                                color: message.isUnsent
-                                    ? (isMe ? Colors.white70 : Colors.grey[600])
-                                    : (isMe ? Colors.white : Colors.black87),
-                                fontSize: 16,
-                                fontStyle: message.isUnsent
-                                    ? FontStyle.italic
-                                    : FontStyle.normal,
-                              ),
-                            ),
-                            if (message.isEdited && !message.isUnsent)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  'edited',
-                                  style: TextStyle(
-                                    color: isMe
-                                        ? Colors.white60
-                                        : Colors.grey[500],
-                                    fontSize: 12,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              if (!isMe) const Spacer(flex: 1),
-            ],
+          Icon(
+            Icons.chat_bubble_outline,
+            size: 80,
+            color: AppColors.onSurfaceVariant.withOpacity(0.3),
           ),
-
-          const SizedBox(height: 4),
-
-          Padding(
-            padding: EdgeInsets.only(left: isMe ? 0 : 8, right: isMe ? 8 : 0),
-
-            child: Row(
-              mainAxisAlignment: isMe
-                  ? MainAxisAlignment.end
-                  : MainAxisAlignment.start,
-
-              mainAxisSize: MainAxisSize.min,
-
-              children: [
-                Text(
-                  _formatMessageTime(message.date),
-
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                ),
-
-                if (isMe) ...[
-                  const SizedBox(width: 4),
-
-                  MessageStatusService.getStatusIcon(MessageStatus.read),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatMessageTime(DateTime dateTime) {
-    final now = DateTime.now();
-
-    final today = DateTime(now.year, now.month, now.day);
-
-    final messageDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
-
-    if (messageDate == today) {
-      // Today - show time
-
-      final hour = dateTime.hour;
-
-      final minute = dateTime.minute.toString().padLeft(2, '0');
-
-      final period = hour >= 12 ? 'PM' : 'AM';
-
-      final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-
-      return '$displayHour:$minute $period';
-    } else {
-      // Other days - show date and time
-
-      final hour = dateTime.hour;
-
-      final minute = dateTime.minute.toString().padLeft(2, '0');
-
-      final period = hour >= 12 ? 'PM' : 'AM';
-
-      final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-
-      return '${dateTime.day}/${dateTime.month} $displayHour:$minute $period';
-    }
-  }
-
-  void _showChatOptions() async {
-    // Force check blocking status before showing menu
-    await _checkBlockStatus();
-
-    // Give a moment for state to update
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    showModalBottomSheet(
-      context: context,
-
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-
-          children: [
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-
-              title: const Text('View Profile'),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                _showUserProfile();
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.volume_off),
-
-              title: const Text('Mute Notifications'),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                // TODO: Implement mute functionality
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.archive),
-
-              title: const Text('Archive Chat'),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                // TODO: Implement archive functionality
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-
-              title: const Text(
-                'Delete Chat',
-
-                style: TextStyle(color: Colors.red),
-              ),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                _showDeleteChatDialog();
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.report, color: Colors.red),
-
-              title: const Text(
-                'Report User',
-
-                style: TextStyle(color: Colors.red),
-              ),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                _showReportUserDialog();
-              },
-            ),
-
-            // Block/Unblock User (Only show if not blocked by other user)
-            if (!_isBlockedByUser)
-              ListTile(
-                leading: Icon(
-                  _isUserBlocked ? Icons.sentiment_satisfied : Icons.block,
-                  color: _isUserBlocked ? Colors.green : Colors.red,
-                ),
-                title: Text(
-                  _isUserBlocked ? 'Unblock User' : 'Block User',
-                  style: TextStyle(
-                    color: _isUserBlocked ? Colors.green : Colors.red,
-                  ),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleBlockUser();
-                },
-              )
-            else
-              // Show info when blocked by other user
-              ListTile(
-                leading: const Icon(Icons.info, color: Colors.grey),
-                title: const Text(
-                  'User has blocked you',
-                  style: TextStyle(color: Colors.grey),
-                ),
-                subtitle: const Text(
-                  'Blocking options are not available',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-                onTap: null, // Disabled
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showMessageOptions(MessageModel message, bool isMe) {
-    // Don't show message options if user is blocked
-    if (_isUserBlocked || _isBlockedByUser) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Message actions are disabled when blocked'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-
-      builder: (context) => Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-
-          children: [
-            if (isMe) ...[
-              ListTile(
-                leading: const Icon(Icons.edit),
-
-                title: const Text('Edit'),
-
-                onTap: () {
-                  Navigator.pop(context);
-
-                  _editMessage(message);
-                },
-              ),
-
-              ListTile(
-                leading: const Icon(Icons.push_pin),
-
-                title: const Text('Pin'),
-
-                onTap: () {
-                  Navigator.pop(context);
-
-                  _pinMessage(message);
-                },
-              ),
-
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-
-                title: const Text(
-                  'Delete for me',
-
-                  style: TextStyle(color: Colors.red),
-                ),
-
-                onTap: () {
-                  Navigator.pop(context);
-
-                  _deleteMessageForMe(message);
-                },
-              ),
-
-              ListTile(
-                leading: const Icon(Icons.undo, color: Colors.red),
-
-                title: const Text(
-                  'Unsend',
-
-                  style: TextStyle(color: Colors.red),
-                ),
-
-                onTap: () {
-                  Navigator.pop(context);
-
-                  _unsendMessage(message);
-                },
-              ),
-            ] else ...[
-              ListTile(
-                leading: const Icon(Icons.push_pin),
-
-                title: const Text('Pin'),
-
-                onTap: () {
-                  Navigator.pop(context);
-
-                  _pinMessage(message);
-                },
-              ),
-
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red),
-
-                title: const Text(
-                  'Delete for me',
-
-                  style: TextStyle(color: Colors.red),
-                ),
-
-                onTap: () {
-                  Navigator.pop(context);
-
-                  _deleteMessageForMe(message);
-                },
-              ),
-            ],
-
-            ListTile(
-              leading: const Icon(Icons.copy),
-
-              title: const Text('Copy'),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                _copyMessage(message);
-              },
-            ),
-
-            ListTile(
-              leading: const Icon(Icons.reply),
-
-              title: const Text('Reply'),
-
-              onTap: () {
-                Navigator.pop(context);
-
-                _startReplyToMessage(message);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _editMessage(MessageModel message) {
-    // Don't allow editing if user is blocked
-    if (_isUserBlocked || _isBlockedByUser) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cannot edit messages when blocked'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final TextEditingController editController = TextEditingController(
-      text: message.content,
-    );
-
-    showDialog(
-      context: context,
-
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Message'),
-
-        content: TextField(
-          controller: editController,
-
-          decoration: const InputDecoration(
-            hintText: 'Edit your message...',
-
-            border: OutlineInputBorder(),
-          ),
-
-          maxLines: null,
-
-          autofocus: true,
-        ),
-
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-
-            child: const Text('Cancel'),
-          ),
-
-          ElevatedButton(
-            onPressed: () async {
-              final newContent = editController.text.trim();
-
-              if (newContent.isNotEmpty && newContent != message.content) {
-                try {
-                  await ThreadMessageService.editMessage(
-                    message.id,
-
-                    newContent,
-                  );
-
-                  if (mounted) {
-                    Navigator.pop(context);
-
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Message edited')),
-                    );
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Failed to edit message: $e')),
-                    );
-                  }
-                }
-              } else {
-                Navigator.pop(context);
-              }
-            },
-
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _pinMessage(MessageModel message) {
-    // TODO: Implement pin message functionality
-
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Message pinned')));
-  }
-
-  void _deleteMessageForMe(MessageModel message) {
-    // Don't allow deleting if user is blocked
-    if (_isUserBlocked || _isBlockedByUser) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cannot delete messages when blocked'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Message'),
-
-        content: const Text('This message will be deleted for you only.'),
-
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-
-            child: const Text('Cancel'),
-          ),
-
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                await ThreadMessageService.deleteMessageForMe(
-                  message.id,
-
-                  currentUserIdAsInt.toString(),
-                );
-
-                if (mounted) {
-                  Navigator.pop(context);
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Message deleted')),
-                  );
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to delete message: $e')),
-                  );
-                }
-              }
-            },
-
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _unsendMessage(MessageModel message) {
-    // Don't allow unsending if user is blocked
-    if (_isUserBlocked || _isBlockedByUser) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cannot unsend messages when blocked'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    showDialog(
-      context: context,
-
-      builder: (context) => AlertDialog(
-        title: const Text('Unsend Message'),
-
-        content: const Text(
-          'This message will be removed for everyone in the chat.',
-        ),
-
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-
-            child: const Text('Cancel'),
-          ),
-
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                await ThreadMessageService.unsendMessage(message.id);
-
-                if (mounted) {
-                  Navigator.pop(context);
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Message unsent')),
-                  );
-                }
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to unsend message: $e')),
-                  );
-                }
-              }
-            },
-
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-
-            child: const Text('Unsend'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _copyMessage(MessageModel message) {
-    Clipboard.setData(ClipboardData(text: message.content));
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Message copied to clipboard')),
-    );
-  }
-
-  void _startReplyToMessage(MessageModel message) {
-    // Don't allow replying if user is blocked
-    if (_isUserBlocked || _isBlockedByUser) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Cannot reply to messages when blocked'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _replyToMessage = message;
-    });
-
-    // Focus on the text field
-
-    FocusScope.of(context).requestFocus(FocusNode());
-  }
-
-  void _clearReply() {
-    setState(() {
-      _replyToMessage = null;
-    });
-  }
-
-  Widget _buildReplyPreview() {
-    if (_replyToMessage == null) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-
-      decoration: BoxDecoration(
-        color: Colors.blue[50],
-
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-
-        border: Border(
-          left: BorderSide(color: const Color(0xFF4A90E2), width: 3),
-        ),
-      ),
-
-      child: Row(
-        children: [
-          Icon(Icons.reply, color: const Color(0xFF4A90E2), size: 20),
-
-          const SizedBox(width: 8),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                Text(
-                  'Replying to ${_replyToMessage!.senderType}',
-
-                  style: TextStyle(
-                    color: const Color(0xFF4A90E2),
-
-                    fontSize: 12,
-
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-
-                const SizedBox(height: 2),
-
-                Text(
-                  _replyToMessage!.content,
-
-                  style: TextStyle(color: Colors.grey[700], fontSize: 14),
-
-                  maxLines: 2,
-
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-
-          IconButton(
-            icon: const Icon(Icons.close, size: 20),
-
-            onPressed: _clearReply,
-
-            color: Colors.grey[600],
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showUserProfile() {
-    showDialog(
-      context: context,
-
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-
-        child: SizedBox(
-          width: double.maxFinite,
-
-          height: MediaQuery.of(context).size.height * 0.85,
-
-          child: Column(
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.all(20),
-
-                decoration: BoxDecoration(
-                  color: Colors.white,
-
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-
-                    topRight: Radius.circular(20),
-                  ),
-
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
-
-                      spreadRadius: 1,
-
-                      blurRadius: 3,
-
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
-                ),
-
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-
-                  children: [
-                    const Text(
-                      'Profile',
-
-                      style: TextStyle(
-                        fontSize: 20,
-
-                        fontWeight: FontWeight.bold,
-
-                        color: Colors.black87,
-                      ),
-                    ),
-
-                    IconButton(
-                      icon: const Icon(Icons.close, color: Colors.grey),
-
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Scrollable Content
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-
-                    children: [
-                      // Profile Picture and Basic Info
-                      CircleAvatar(
-                        radius: 60,
-
-                        backgroundColor: Colors.grey[200],
-
-                        backgroundImage: widget.otherUser.name.isNotEmpty
-                            ? null
-                            : const AssetImage('assets/default_avatar.png'),
-
-                        child: widget.otherUser.name.isNotEmpty
-                            ? Text(
-                                widget.otherUser.name[0].toUpperCase(),
-
-                                style: const TextStyle(
-                                  color: Colors.white,
-
-                                  fontSize: 36,
-
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              )
-                            : null,
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Name
-                      Text(
-                        widget.otherUser.name.isNotEmpty
-                            ? widget.otherUser.name
-                            : 'Unknown User',
-
-                        style: const TextStyle(
-                          fontSize: 28,
-
-                          fontWeight: FontWeight.bold,
-
-                          color: Colors.black87,
-                        ),
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      // User Type Badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-
-                          vertical: 8,
-                        ),
-
-                        decoration: BoxDecoration(
-                          color: widget.otherUser.userType == 'tradie'
-                              ? const Color(0xFF4A90E2)
-                              : Colors.green,
-
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-
-                        child: Text(
-                          widget.otherUser.userType.toUpperCase(),
-
-                          style: const TextStyle(
-                            color: Colors.white,
-
-                            fontWeight: FontWeight.bold,
-
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      // Rating
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-
-                        children: [
-                          const Icon(
-                            Icons.star,
-
-                            color: Colors.orange,
-
-                            size: 24,
-                          ),
-
-                          const SizedBox(width: 4),
-
-                          const Text(
-                            '4.7',
-
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-
-                              fontSize: 18,
-                            ),
-                          ),
-
-                          const SizedBox(width: 8),
-
-                          Text(
-                            '(18 reviews)',
-
-                            style: TextStyle(
-                              color: Colors.grey[600],
-
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      // About Section
-                      _buildProfileSection(
-                        'About',
-
-                        widget.otherUser.userType == 'tradie'
-                            ? 'Experienced professional specializing in ${widget.otherUser.tradeType ?? 'home renovation'}. Committed to delivering high-quality work with attention to detail and punctuality.'
-                            : 'Looking for experienced professionals for home renovation projects. Appreciate punctuality, attention to detail, and quality workmanship.',
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Contact Information Section
-                      _buildProfileSection(
-                        'Contact Information',
-
-                        null,
-
-                        children: [
-                          _buildContactInfo(Icons.location_on, 'Brisbane, QLD'),
-
-                          _buildContactInfo(Icons.phone, '+61 434 789 012'),
-
-                          _buildContactInfo(
-                            Icons.email,
-
-                            '${widget.otherUser.name.toLowerCase().replaceAll(' ', '.')}@email.com',
-                          ),
-
-                          _buildContactInfo(
-                            Icons.calendar_today,
-
-                            'Joined June 2023',
-                          ),
-                        ],
-                      ),
-
-                      // Job History Section (for tradies)
-                      if (widget.otherUser.userType == 'tradie') ...[
-                        const SizedBox(height: 24),
-
-                        _buildProfileSection(
-                          'Job History',
-
-                          null,
-
-                          children: [
-                            _buildJobHistoryItem(
-                              'Bathroom Renovation',
-
-                              'pending',
-
-                              'This week',
-
-                              '\$6,200',
-
-                              Icons.bathtub,
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            _buildJobHistoryItem(
-                              'Kitchen Splashback Installation',
-
-                              'completed',
-
-                              'Last month',
-
-                              '\$800',
-
-                              Icons.kitchen,
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            _buildJobHistoryItem(
-                              'Deck Construction',
-
-                              'completed',
-
-                              '2 months ago',
-
-                              '\$3,500',
-
-                              Icons.deck,
-                            ),
-                          ],
-                        ),
-                      ],
-
-                      // Recent Projects Section (for homeowners)
-                      if (widget.otherUser.userType == 'homeowner') ...[
-                        const SizedBox(height: 24),
-
-                        _buildProfileSection(
-                          'Recent Projects',
-
-                          null,
-
-                          children: [
-                            _buildProjectItem(
-                              'Bathroom Renovation',
-
-                              'In Progress',
-
-                              'Started this week',
-
-                              Icons.bathtub,
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            _buildProjectItem(
-                              'Garden Landscaping',
-
-                              'Completed',
-
-                              'Last month',
-
-                              Icons.grass,
-                            ),
-                          ],
-                        ),
-                      ],
-
-                      const SizedBox(height: 30),
-
-                      // Action Buttons
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(context);
-
-                                // TODO: Implement call functionality
-                              },
-
-                              icon: const Icon(Icons.phone, size: 18),
-
-                              label: const Text('Call'),
-
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-
-                                foregroundColor: Colors.white,
-
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(width: 12),
-
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () {
-                                Navigator.pop(context);
-
-                                // TODO: Implement email functionality
-                              },
-
-                              icon: const Icon(Icons.email, size: 18),
-
-                              label: const Text('Email'),
-
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF4A90E2),
-
-                                foregroundColor: Colors.white,
-
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileSection(
-    String title,
-
-    String? description, {
-
-    List<Widget>? children,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-
-      children: [
-        Text(
-          title,
-
-          style: const TextStyle(
-            fontSize: 18,
-
-            fontWeight: FontWeight.bold,
-
-            color: Colors.black87,
-          ),
-        ),
-
-        const SizedBox(height: 12),
-
-        if (description != null) ...[
+          const SizedBox(height: AppDimensions.spacing16),
           Text(
-            description,
-
-            style: TextStyle(
-              color: Colors.grey[700],
-
-              fontSize: 14,
-
-              height: 1.5,
+            'No messages yet',
+            style: AppTextStyles.headlineSmall.copyWith(
+              color: AppColors.onSurfaceVariant,
             ),
           ),
-        ],
-
-        if (children != null) ...children,
-      ],
-    );
-  }
-
-  Widget _buildContactInfo(IconData icon, String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-
-              borderRadius: BorderRadius.circular(8),
-            ),
-
-            child: Icon(icon, size: 18, color: Colors.grey[600]),
-          ),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Text(
-              text,
-
-              style: TextStyle(color: Colors.grey[700], fontSize: 14),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildJobHistoryItem(
-    String title,
-
-    String status,
-
-    String timeframe,
-
-    String amount,
-
-    IconData icon,
-  ) {
-    Color statusColor = status == 'completed' ? Colors.green : Colors.orange;
-
-    String statusText = status == 'completed' ? 'Completed' : 'Pending';
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-
-        borderRadius: BorderRadius.circular(12),
-
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-
-            decoration: BoxDecoration(
-              color: const Color(0xFF4A90E2).withOpacity(0.1),
-
-              borderRadius: BorderRadius.circular(10),
-            ),
-
-            child: Icon(icon, color: const Color(0xFF4A90E2), size: 24),
-          ),
-
-          const SizedBox(width: 16),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                Text(
-                  title,
-
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-
-                    fontSize: 16,
-
-                    color: Colors.black87,
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-
-                        vertical: 2,
-                      ),
-
-                      decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.1),
-
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-
-                      child: Text(
-                        statusText,
-
-                        style: TextStyle(
-                          color: statusColor,
-
-                          fontSize: 12,
-
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    Text(
-                      timeframe,
-
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
+          const SizedBox(height: AppDimensions.spacing8),
           Text(
-            amount,
-
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-
-              fontSize: 16,
-
-              color: Colors.black87,
+            'Start the conversation!',
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: AppColors.onSurfaceVariant,
             ),
           ),
         ],
@@ -2215,443 +268,132 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildProjectItem(
-    String title,
-
-    String status,
-
-    String timeframe,
-
-    IconData icon,
-  ) {
-    Color statusColor = status == 'Completed' ? Colors.green : Colors.blue;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-
-        borderRadius: BorderRadius.circular(12),
-
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
-
-              borderRadius: BorderRadius.circular(10),
-            ),
-
-            child: Icon(icon, color: statusColor, size: 24),
-          ),
-
-          const SizedBox(width: 16),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                Text(
-                  title,
-
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-
-                    fontSize: 16,
-
-                    color: Colors.black87,
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-
-                        vertical: 2,
-                      ),
-
-                      decoration: BoxDecoration(
-                        color: statusColor.withOpacity(0.1),
-
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-
-                      child: Text(
-                        status,
-
-                        style: TextStyle(
-                          color: statusColor,
-
-                          fontSize: 12,
-
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    Text(
-                      timeframe,
-
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+  Widget _buildMessageList() {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(AppDimensions.paddingMedium),
+      itemCount: _messages.length,
+      itemBuilder: (context, index) {
+        final message = _messages[index];
+        final isMe = message['sender_id'].toString() == _currentUserId;
+        return _buildMessageBubble(message, isMe);
+      },
     );
   }
 
-  void _showDeleteChatDialog() {
-    showDialog(
-      context: context,
-
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Chat?'),
-
-        content: const Text(
-          'This will permanently delete this conversation. This action cannot be undone.',
+  Widget _buildMessageBubble(Map<String, dynamic> message, bool isMe) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: AppDimensions.spacing8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppDimensions.paddingMedium,
+          vertical: AppDimensions.paddingSmall,
         ),
-
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-
-            child: const Text('Cancel'),
-          ),
-
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-
-              Navigator.pop(context); // Go back to chat list
-
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Chat deleted')));
-            },
-
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showReportUserDialog() {
-    String selectedReason = 'Inappropriate behavior';
-
-    final TextEditingController detailsController = TextEditingController();
-
-    showDialog(
-      context: context,
-
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Row(
-            children: [
-              const Icon(Icons.report, color: Colors.orange),
-
-              const SizedBox(width: 8),
-
-              Text('Report ${widget.otherUser.name}'),
-            ],
-          ),
-
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              children: [
-                const Text(
-                  'Help us understand what\'s wrong.\nWe\'ll review this report and take\nappropriate action.',
-                ),
-
-                const SizedBox(height: 16),
-
-                const Text(
-                  'Reason for reporting',
-
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-
-                const SizedBox(height: 8),
-
-                ...[
-                  'Inappropriate behavior',
-
-                  'Spam or scam',
-
-                  'Harassment',
-
-                  'Fake profile',
-
-                  'Other',
-                ].map(
-                  (reason) => RadioListTile<String>(
-                    title: Text(reason),
-
-                    value: reason,
-
-                    groupValue: selectedReason,
-
-                    onChanged: (value) =>
-                        setState(() => selectedReason = value!),
-
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                const Text(
-                  'Additional details (optional)',
-
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-
-                const SizedBox(height: 8),
-
-                TextField(
-                  controller: detailsController,
-
-                  decoration: const InputDecoration(
-                    hintText: 'Provide more information about this report',
-
-                    border: OutlineInputBorder(),
-                  ),
-
-                  maxLines: 3,
-                ),
-              ],
-            ),
-          ),
-
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-
-              child: const Text('Cancel'),
-            ),
-
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      'Report submitted. Thank you for helping keep our community safe.',
-                    ),
-
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              },
-
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-
-              child: const Text('Submit Report'),
-            ),
-          ],
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.7,
         ),
-      ),
-    );
-  }
-
-  Widget _buildBlockedUserWarning() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-
-      decoration: BoxDecoration(
-        color: Colors.red[50],
-
-        border: Border(top: BorderSide(color: Colors.red[200]!, width: 1)),
-      ),
-
-      child: Row(
-        children: [
-          Icon(Icons.block, color: Colors.red[600], size: 24),
-
-          const SizedBox(width: 12),
-
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-
-              mainAxisSize: MainAxisSize.min,
-
-              children: [
-                Text(
-                  _isUserBlocked
-                      ? 'You have blocked this user'
-                      : 'This user has blocked you',
-
-                  style: TextStyle(
-                    color: Colors.red[800],
-
-                    fontWeight: FontWeight.w600,
-
-                    fontSize: 16,
-                  ),
-                ),
-
-                const SizedBox(height: 4),
-
-                Text(
-                  'You cannot send or receive messages.',
-
-                  style: TextStyle(color: Colors.red[700], fontSize: 14),
-                ),
-              ],
-            ),
-          ),
-
-          if (_isUserBlocked) ...[
-            const SizedBox(width: 12),
-
-            ElevatedButton(
-              onPressed: _toggleBlockUser,
-
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red[600],
-
-                foregroundColor: Colors.white,
-
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-
-                  vertical: 8,
-                ),
+        decoration: BoxDecoration(
+          color: isMe ? AppColors.primary : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppDimensions.radiusMedium),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              message['content']?.toString() ?? '',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: isMe ? Colors.white : AppColors.onSurface,
               ),
-
-              child: const Text('Unblock'),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _formatTime(message['date']),
+              style: AppTextStyles.bodySmall.copyWith(
+                color: isMe
+                    ? Colors.white.withOpacity(0.7)
+                    : AppColors.onSurfaceVariant,
+                fontSize: 10,
+              ),
             ),
           ],
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildMessageInput() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-
+      padding: const EdgeInsets.all(AppDimensions.paddingMedium),
       decoration: BoxDecoration(
-        color: Colors.white,
-
+        color: AppColors.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-
-            spreadRadius: 1,
-
-            blurRadius: 3,
-
-            offset: const Offset(0, -1),
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
           ),
         ],
       ),
-
       child: Row(
         children: [
-          IconButton(
-            icon: Icon(Icons.attach_file, color: Colors.grey[600]),
-
-            onPressed: () {
-              // TODO: Implement file attachment
-            },
-          ),
-
           Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-
-                borderRadius: BorderRadius.circular(25),
-              ),
-
-              child: TextField(
-                controller: _messageController,
-
-                decoration: InputDecoration(
-                  hintText: _replyToMessage != null
-                      ? 'Reply to ${_replyToMessage!.senderType}...'
-                      : 'Type your message...',
-
-                  hintStyle: TextStyle(color: Colors.grey[500]),
-
-                  border: InputBorder.none,
-
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-
-                    vertical: 12,
-                  ),
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: 'Type a message...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
                 ),
-
-                maxLines: null,
-
-                textInputAction: TextInputAction.send,
-
-                onSubmitted: (_) => _sendMessage(),
+                filled: true,
+                fillColor: AppColors.background,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: AppDimensions.paddingMedium,
+                  vertical: AppDimensions.paddingSmall,
+                ),
               ),
+              maxLines: null,
+              textCapitalization: TextCapitalization.sentences,
             ),
           ),
-
-          IconButton(
-            icon: const Text('😊', style: TextStyle(fontSize: 20)),
-
-            onPressed: () {
-              // TODO: Implement emoji picker
-            },
-          ),
-
-          Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFF4A90E2),
-
-              shape: BoxShape.circle,
-            ),
-
-            child: IconButton(
-              icon: const Icon(Icons.send, color: Colors.white, size: 20),
-
-              onPressed: _sendMessage,
-            ),
+          const SizedBox(width: AppDimensions.spacing8),
+          CircleAvatar(
+            backgroundColor: AppColors.primary,
+            child: _isSending
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.send, color: Colors.white),
+                    onPressed: _sendMessage,
+                  ),
           ),
         ],
       ),
     );
   }
 
-  @override
-  void dispose() {
-    _updateMyOnlineStatus(false);
+  String _formatTime(dynamic timestamp) {
+    if (timestamp == null) return '';
 
-    _messageController.dispose();
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
+    final now = DateTime.now();
+    final difference = now.difference(date);
 
-    _scrollController.dispose();
-
-    super.dispose();
+    if (difference.inDays == 0) {
+      return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } else if (difference.inDays == 1) {
+      return 'Yesterday';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} days ago';
+    } else {
+      return '${date.day}/${date.month}/${date.year}';
+    }
   }
 }

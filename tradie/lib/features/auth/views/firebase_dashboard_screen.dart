@@ -65,7 +65,7 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                     const SizedBox(height: AppDimensions.spacing8),
                     if (authState.userData != null) ...[
                       Text(
-                        authState.userData!.displayName,
+                        authState.userData!['name'] ?? 'User',
                         style: AppTextStyles.titleLarge.copyWith(
                           fontWeight: FontWeight.bold,
                           color: AppColors.primary,
@@ -73,7 +73,7 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                       ),
                       const SizedBox(height: AppDimensions.spacing4),
                       Text(
-                        authState.userData!.email,
+                        authState.userData!['email'] ?? '',
                         style: AppTextStyles.bodyMedium.copyWith(
                           color: AppColors.onSurfaceVariant,
                         ),
@@ -98,7 +98,7 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                               ),
                             ),
                           ),
-                          if (authState.userData!.tradeType != null) ...[
+                          if (authState.userData!['business_name'] != null) ...[
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -112,7 +112,9 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                authState.userData!.tradeType!.toUpperCase(),
+                                authState.userData!['business_name']!
+                                    .toString()
+                                    .toUpperCase(),
                                 style: AppTextStyles.bodySmall.copyWith(
                                   color: AppColors.tradieBlue,
                                   fontWeight: FontWeight.bold,
@@ -151,8 +153,7 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                     subtitle: 'Chat with homeowners',
                     color: Colors.blueAccent,
                     onTap: () {
-                      final userId = authState.userData?.autoId ?? 1;
-                      authViewModel.openChat(context, userId);
+                      context.push('/chats');
                     },
                   ),
                   _buildActionCard(

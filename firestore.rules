@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // SECURITY: Flutter can only READ, Laravel Admin SDK writes
+    // This prevents spam, hacks, and unauthorized writes
+    
+    // Threads collection - READ ONLY for Flutter
+    match /threads/{threadId} {
+      // Anyone can read threads (you can add auth checks if needed)
+      allow read: if true;
+      
+      // Only Laravel Admin SDK can write (bypasses these rules)
+      allow write: if false;
+      
+      // Messages subcollection - READ ONLY for Flutter
+      match /messages/{messageId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+    
+    // User profiles - READ ONLY for Flutter
+    match /userProfiles/{userId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // User preferences - READ ONLY for Flutter
+    match /userPreferences/{userId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // Blocked users - READ ONLY for Flutter
+    match /blocked_users/{blockId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // User status (online/offline) - READ ONLY for Flutter
+    match /userStatus/{userId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // Reports - READ ONLY for Flutter
+    match /reports/{reportId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // Counters - READ ONLY for Flutter
+    match /counters/{counterId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // Default: deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

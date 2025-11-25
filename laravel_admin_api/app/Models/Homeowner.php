@@ -12,11 +12,9 @@ class Homeowner extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
-        'firebase_uid',
         'first_name',
         'last_name',
         'middle_name',
-        'name',
         'email',
         'phone',
         'password',
