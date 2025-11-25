@@ -25,6 +25,8 @@ class ChatApiService {
         throw Exception('Not authenticated');
       }
 
+      print('📤 Sending message: sender=$senderId, receiver=$receiverId');
+
       final response = await http.post(
         Uri.parse('$baseUrl/chats/send-message'),
         headers: {
@@ -32,9 +34,9 @@ class ChatApiService {
           'Authorization': 'Bearer $token',
         },
         body: jsonEncode({
-          'sender_id': int.parse(senderId),
+          'sender_id': int.tryParse(senderId) ?? 0,
           'sender_type': senderType,
-          'receiver_id': int.parse(receiverId),
+          'receiver_id': int.tryParse(receiverId) ?? 0,
           'receiver_type': receiverType,
           'message': message,
         }),
@@ -142,6 +144,36 @@ class ChatApiService {
       return [];
     } catch (e) {
       print('❌ Get user chats error: $e');
+      return [];
+    }
+  }
+
+  // Get all homeowners
+  Future<List<Map<String, dynamic>>> getAllHomeowners() async {
+    try {
+      final token = await _getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/homeowners'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          return List<Map<String, dynamic>>.from(data['data'] ?? []);
+        }
+      }
+
+      return [];
+    } catch (e) {
+      print('❌ Get all homeowners error: $e');
       return [];
     }
   }

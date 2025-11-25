@@ -61,62 +61,55 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
         });
 
         // Listen to threads from Firebase
-        _chatRepository.getThreads(userId: userId, userType: 'homeowner').listen(
-          (threads) {
-            print('📋 Received ${threads.length} threads from Firebase');
+        _chatRepository
+            .getThreads(userId: userId, userType: 'homeowner')
+            .listen((threads) {
+              print('📋 Received ${threads.length} threads from Firebase');
 
-            // Convert threads to chat format and match with user names
-            final chats = threads
-                .where((thread) {
-                  // Filter out threads with invalid tradie_id
-                  final tradieId = thread['tradie_id'];
-                  return tradieId != null && tradieId != 0;
-                })
-                .map((thread) {
-                  final tradieId = thread['tradie_id'];
-                  final tradie = _allUsers.firstWhere(
-                    (u) => u['id'] == tradieId,
-                    orElse: () => {},
-                  );
+              // Convert threads to chat format and match with user names
+              final chats = threads.map((thread) {
+                final tradieId = thread['tradie_id'];
+                final tradie = _allUsers.firstWhere(
+                  (u) => u['id'] == tradieId,
+                  orElse: () => {},
+                );
 
-                  // Construct full name from first_name, middle_name, last_name
-                  String fullName = 'Tradie #$tradieId';
-                  if (tradie.isNotEmpty) {
-                    final firstName = tradie['first_name'] ?? '';
-                    final middleName = tradie['middle_name'] ?? '';
-                    final lastName = tradie['last_name'] ?? '';
-                    fullName = [
-                      firstName,
-                      middleName,
-                      lastName,
-                    ].where((s) => s.isNotEmpty).join(' ').trim();
-                    if (fullName.isEmpty) fullName = 'Tradie #$tradieId';
-                  }
+                // Construct full name from first_name, middle_name, last_name
+                String fullName = 'Tradie #$tradieId';
+                if (tradie.isNotEmpty) {
+                  final firstName = tradie['first_name'] ?? '';
+                  final middleName = tradie['middle_name'] ?? '';
+                  final lastName = tradie['last_name'] ?? '';
+                  fullName = [
+                    firstName,
+                    middleName,
+                    lastName,
+                  ].where((s) => s.isNotEmpty).join(' ').trim();
+                  if (fullName.isEmpty) fullName = 'Tradie #$tradieId';
+                }
 
-                  return {
-                    'id': thread['id'],
-                    'name': fullName,
-                    'email': tradie['email'] ?? '',
-                    'business_name': tradie['business_name'] ?? '',
-                    'lastMessage': thread['last_message'] ?? '',
-                    'time': thread['last_message_time'],
-                    'unreadCount': 0,
-                    'is_pinned': false,
-                    'is_archived': false,
-                    'is_muted': false,
-                    'is_favorite': false,
-                    'tradie_id': tradieId,
-                  };
-                })
-                .toList();
+                return {
+                  'id': thread['id'],
+                  'name': fullName,
+                  'email': tradie['email'] ?? '',
+                  'business_name': tradie['business_name'] ?? '',
+                  'lastMessage': thread['last_message'] ?? '',
+                  'time': thread['last_message_time'],
+                  'unreadCount': 0,
+                  'is_pinned': false,
+                  'is_archived': false,
+                  'is_muted': false,
+                  'is_favorite': false,
+                  'tradie_id': tradieId,
+                };
+              }).toList();
 
-            setState(() {
-              _allChats = chats;
-              _filterChats();
-              _isLoading = false;
+              setState(() {
+                _allChats = chats;
+                _filterChats();
+                _isLoading = false;
+              });
             });
-          },
-        );
       } else {
         setState(() {
           _allChats = [];

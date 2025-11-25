@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
@@ -185,15 +186,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: AppColors.primary,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => context.go('/chats'),
+        ),
         title: Row(
           children: [
             CircleAvatar(
-              backgroundColor: AppColors.primary,
+              radius: 20,
+              backgroundColor: Colors.white,
               child: Text(
                 widget.otherUserName.substring(0, 1).toUpperCase(),
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(color: AppColors.primary, fontSize: 18),
               ),
             ),
             const SizedBox(width: AppDimensions.spacing12),
@@ -201,13 +209,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(widget.otherUserName, style: AppTextStyles.titleMedium),
                   Text(
-                    widget.otherUserType == 'homeowner'
-                        ? 'Homeowner'
-                        : 'Tradie',
+                    widget.otherUserName,
+                    style: AppTextStyles.titleMedium.copyWith(
+                      color: Colors.white,
+                      fontSize: 16,
+                    ),
+                  ),
+                  Text(
+                    'Offline',
                     style: AppTextStyles.bodySmall.copyWith(
-                      color: AppColors.onSurfaceVariant,
+                      color: Colors.white70,
+                      fontSize: 12,
                     ),
                   ),
                 ],
@@ -217,10 +230,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: () {
-              // Show options menu
-            },
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            onPressed: () {},
           ),
         ],
       ),
@@ -275,7 +286,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final message = _messages[index];
-        final isMe = message['sender_id'].toString() == _currentUserId;
+        // Check both sender_id AND sender_type
+        final isMe =
+            message['sender_id'].toString() == _currentUserId &&
+            message['sender_type'] == 'tradie';
         return _buildMessageBubble(message, isMe);
       },
     );
@@ -324,53 +338,65 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _buildMessageInput() {
     return Container(
-      padding: const EdgeInsets.all(AppDimensions.paddingMedium),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppDimensions.paddingMedium,
+        vertical: AppDimensions.paddingSmall,
       ),
+      decoration: BoxDecoration(color: Colors.grey[100]),
       child: Row(
         children: [
+          IconButton(
+            icon: Icon(Icons.attach_file, color: AppColors.primary),
+            onPressed: () {
+              // Handle attachment
+            },
+          ),
           Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Type a message...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                fillColor: AppColors.background,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: AppDimensions.paddingMedium,
-                  vertical: AppDimensions.paddingSmall,
-                ),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(25),
               ),
-              maxLines: null,
-              textCapitalization: TextCapitalization.sentences,
+              child: TextField(
+                controller: _messageController,
+                decoration: const InputDecoration(
+                  hintText: 'Type your message...',
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 10,
+                  ),
+                ),
+                maxLines: null,
+                textCapitalization: TextCapitalization.sentences,
+              ),
             ),
           ),
-          const SizedBox(width: AppDimensions.spacing8),
-          CircleAvatar(
-            backgroundColor: AppColors.primary,
+          IconButton(
+            icon: const Text('😊', style: TextStyle(fontSize: 24)),
+            onPressed: () {
+              // Handle emoji picker
+            },
+          ),
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+            ),
             child: _isSending
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ? const Padding(
+                    padding: EdgeInsets.all(12.0),
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
                     ),
                   )
                 : IconButton(
-                    icon: const Icon(Icons.send, color: Colors.white),
+                    icon: const Icon(Icons.send, color: Colors.white, size: 20),
                     onPressed: _sendMessage,
                   ),
           ),

@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_database/firebase_database.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../auth/services/homeowner_api_auth_service.dart';
 import '../services/chat_api_service.dart';
-import '../repositories/chat_repository_realtime.dart';
 
 class ChatListScreen extends ConsumerStatefulWidget {
   const ChatListScreen({super.key});
@@ -20,7 +18,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
     with SingleTickerProviderStateMixin {
   final _authService = HomeownerApiAuthService();
   final _chatService = ChatApiService();
-  final _chatRepository = ChatRepository();
   final _searchController = TextEditingController();
   late TabController _tabController;
 
@@ -29,7 +26,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
   List<Map<String, dynamic>> _allUsers = [];
   bool _isLoading = true;
   String _searchQuery = '';
-  int? _currentUserId;
 
   @override
   void initState() {
@@ -51,72 +47,18 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
     try {
       final userId = await _authService.getUserId();
       if (userId != null) {
-        _currentUserId = userId;
-
-        // Load users
+        final chats = await _chatService.getUserChats(
+          userId: userId.toString(),
+          userType: 'homeowner',
+        );
         final users = await _chatService.getAllTradies();
 
         setState(() {
+          _allChats = chats;
           _allUsers = users;
+          _filterChats();
+          _isLoading = false;
         });
-
-        // Listen to threads from Firebase
-        _chatRepository.getThreads(userId: userId, userType: 'homeowner').listen(
-          (threads) {
-            print('📋 Received ${threads.length} threads from Firebase');
-
-            // Convert threads to chat format and match with user names
-            final chats = threads
-                .where((thread) {
-                  // Filter out threads with invalid tradie_id
-                  final tradieId = thread['tradie_id'];
-                  return tradieId != null && tradieId != 0;
-                })
-                .map((thread) {
-                  final tradieId = thread['tradie_id'];
-                  final tradie = _allUsers.firstWhere(
-                    (u) => u['id'] == tradieId,
-                    orElse: () => {},
-                  );
-
-                  // Construct full name from first_name, middle_name, last_name
-                  String fullName = 'Tradie #$tradieId';
-                  if (tradie.isNotEmpty) {
-                    final firstName = tradie['first_name'] ?? '';
-                    final middleName = tradie['middle_name'] ?? '';
-                    final lastName = tradie['last_name'] ?? '';
-                    fullName = [
-                      firstName,
-                      middleName,
-                      lastName,
-                    ].where((s) => s.isNotEmpty).join(' ').trim();
-                    if (fullName.isEmpty) fullName = 'Tradie #$tradieId';
-                  }
-
-                  return {
-                    'id': thread['id'],
-                    'name': fullName,
-                    'email': tradie['email'] ?? '',
-                    'business_name': tradie['business_name'] ?? '',
-                    'lastMessage': thread['last_message'] ?? '',
-                    'time': thread['last_message_time'],
-                    'unreadCount': 0,
-                    'is_pinned': false,
-                    'is_archived': false,
-                    'is_muted': false,
-                    'is_favorite': false,
-                    'tradie_id': tradieId,
-                  };
-                })
-                .toList();
-
-            setState(() {
-              _allChats = chats;
-              _filterChats();
-              _isLoading = false;
-            });
-          },
-        );
       } else {
         setState(() {
           _allChats = [];
@@ -125,7 +67,6 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
         });
       }
     } catch (e) {
-      print('Error loading data: $e');
       setState(() {
         _allChats = [];
         _allUsers = [];
@@ -263,20 +204,14 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
   }
 
   Widget _buildRecentTab(List<Map<String, dynamic>> chats) {
-    print(
-      '📋 Building recent tab with ${chats.length} chats and ${_allUsers.length} users',
-    );
-
     if (chats.isEmpty && _allUsers.isEmpty) {
       return _buildEmptyState();
     }
 
     if (chats.isEmpty) {
-      print('📋 Showing user list (no chats yet)');
       return _buildUserList();
     }
 
-    print('📋 Showing ${chats.length} chats');
     return ListView.builder(
       itemCount: chats.length,
       itemBuilder: (context, index) => _buildChatItem(chats[index]),
@@ -452,14 +387,8 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
             ],
           ],
         ),
-        onTap: () {
-          print('🔵 Tapped on chat: ${chat['id']}');
-          context.push('/chat/${chat['id']}');
-        },
-        onLongPress: () {
-          print('🟢 Long pressed on chat: ${chat['id']}');
-          _showChatOptions(chat);
-        },
+        onTap: () => context.push('/chat/${chat['id']}'),
+        onLongPress: () => _showChatOptions(chat),
       ),
     );
   }
@@ -900,33 +829,9 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
     }
   }
 
-  String _formatTime(dynamic timestamp) {
-    if (timestamp == null) return '';
-
-    try {
-      final date = DateTime.fromMillisecondsSinceEpoch(timestamp as int);
-      final now = DateTime.now();
-      final difference = now.difference(date);
-
-      if (difference.inDays == 0) {
-        // Today - show time
-        return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-      } else if (difference.inDays == 1) {
-        // Yesterday
-        return 'Yesterday';
-      } else if (difference.inDays < 7) {
-        // This week - show day name
-        final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-        return days[date.weekday - 1];
-      } else if (difference.inDays < 365) {
-        // This year - show date
-        return '${date.day}/${date.month}';
-      } else {
-        // Older - show full date
-        return '${date.day}/${date.month}/${date.year}';
-      }
-    } catch (e) {
-      return '';
-    }
+  String _formatTime(dynamic time) {
+    if (time == null) return '';
+    // TODO: Implement proper time formatting
+    return time.toString();
   }
 }
