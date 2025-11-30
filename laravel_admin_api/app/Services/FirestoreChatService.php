@@ -37,6 +37,7 @@ class FirestoreChatService
             $senderType = $data['sender_type']; // 'homeowner' or 'tradie'
             $receiverType = $data['receiver_type'];
             $message = $data['message'];
+            $replyTo = $data['reply_to'] ?? null; // Optional reply data
 
             // Determine tradie and homeowner IDs
             $tradieId = $senderType === 'tradie' ? $senderId : $receiverId;
@@ -48,17 +49,25 @@ class FirestoreChatService
             // Get next message ID
             $messageId = $this->getNextMessageId($threadId);
 
+            // Prepare message data
+            $messageData = [
+                'sender_id' => $senderId,
+                'sender_type' => $senderType,
+                'content' => $message,
+                'date' => ['.sv' => 'timestamp'],
+                'read' => false,
+                'message_id' => $messageId,
+            ];
+
+            // Add reply data if present
+            if ($replyTo) {
+                $messageData['reply_to'] = $replyTo;
+            }
+
             // Add message to Firebase Realtime Database
             $this->database
                 ->getReference("threads/$threadId/messages/msg_$messageId")
-                ->set([
-                    'sender_id' => $senderId,
-                    'sender_type' => $senderType,
-                    'content' => $message,
-                    'date' => ['.sv' => 'timestamp'],
-                    'read' => false,
-                    'message_id' => $messageId,
-                ]);
+                ->set($messageData);
 
             // Update thread last message
             $this->database

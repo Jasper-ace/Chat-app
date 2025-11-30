@@ -30,12 +30,28 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
   bool _isLoading = true;
   String _searchQuery = '';
   int? _currentUserId;
+  final Map<String, bool> _typingStatus = {}; // threadId -> isTyping
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadData();
+  }
+
+  void _listenToTypingStatus(String threadId, int tradieId) {
+    final typingRef = FirebaseDatabase.instance.ref(
+      'threads/$threadId/typing/${tradieId}_tradie',
+    );
+
+    typingRef.onValue.listen((event) {
+      if (mounted && event.snapshot.exists) {
+        final isTyping = event.snapshot.value as bool? ?? false;
+        setState(() {
+          _typingStatus[threadId] = isTyping;
+        });
+      }
+    });
   }
 
   @override
@@ -115,6 +131,11 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
               _filterChats();
               _isLoading = false;
             });
+
+            // Listen to typing status for each chat
+            for (final chat in chats) {
+              _listenToTypingStatus(chat['id'], chat['tradie_id']);
+            }
           },
         );
       } else {
@@ -171,7 +192,7 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
         actions: [
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.white),
-            onPressed: () {},
+            onPressed: () => context.push('/settings'),
           ),
         ],
       ),
@@ -414,15 +435,41 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
               ),
           ],
         ),
-        subtitle: Text(
-          chat['lastMessage'] ?? 'No messages yet',
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.onSurfaceVariant,
-            fontWeight: hasUnread ? FontWeight.w600 : FontWeight.normal,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        subtitle: _typingStatus[chat['id']] == true
+            ? Row(
+                children: [
+                  Text(
+                    'Typing',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 20,
+                    height: 12,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildTypingDot(0),
+                        _buildTypingDot(1),
+                        _buildTypingDot(2),
+                      ],
+                    ),
+                  ),
+                ],
+              )
+            : Text(
+                chat['lastMessage'] ?? 'No messages yet',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.onSurfaceVariant,
+                  fontWeight: hasUnread ? FontWeight.w600 : FontWeight.normal,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
         trailing: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -468,6 +515,36 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
           _showChatOptions(chat);
         },
       ),
+    );
+  }
+
+  Widget _buildTypingDot(int index) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 600),
+      builder: (context, value, child) {
+        final delay = index * 0.2;
+        final animValue = ((value + delay) % 1.0);
+        final opacity = animValue < 0.5 ? (animValue * 2) : (2 - animValue * 2);
+
+        return Opacity(
+          opacity: opacity.clamp(0.3, 1.0),
+          child: Container(
+            width: 4,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+            ),
+          ),
+        );
+      },
+      onEnd: () {
+        // Restart animation
+        if (mounted) {
+          setState(() {});
+        }
+      },
     );
   }
 
@@ -913,8 +990,12 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
       final difference = now.difference(date);
 
       if (difference.inDays == 0) {
-        // Today - show time
-        return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+        // Today - show time in 12-hour format
+        final hour = date.hour == 0
+            ? 12
+            : (date.hour > 12 ? date.hour - 12 : date.hour);
+        final period = date.hour >= 12 ? 'PM' : 'AM';
+        return '${hour.toString()}:${date.minute.toString().padLeft(2, '0')} $period';
       } else if (difference.inDays == 1) {
         // Yesterday
         return 'Yesterday';

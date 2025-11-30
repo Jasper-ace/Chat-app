@@ -128,6 +128,10 @@ class ChatController extends Controller
             'sender_type' => 'required|in:homeowner,tradie',
             'receiver_type' => 'required|in:homeowner,tradie',
             'message' => 'required|string|max:5000',
+            'reply_to' => 'nullable|array',
+            'reply_to.message_id' => 'nullable|string',
+            'reply_to.sender_name' => 'nullable|string',
+            'reply_to.content' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -142,13 +146,20 @@ class ChatController extends Controller
             // Use new Firestore service
             $firestoreService = app(\App\Services\FirestoreChatService::class);
             
-            $result = $firestoreService->sendMessage([
+            $messageData = [
                 'sender_id' => $request->sender_id,
                 'receiver_id' => $request->receiver_id,
                 'sender_type' => $request->sender_type,
                 'receiver_type' => $request->receiver_type,
                 'message' => $request->message,
-            ]);
+            ];
+
+            // Add reply data if present
+            if ($request->has('reply_to')) {
+                $messageData['reply_to'] = $request->reply_to;
+            }
+
+            $result = $firestoreService->sendMessage($messageData);
 
             if ($result['success']) {
                 // Also save to MySQL for backup/analytics

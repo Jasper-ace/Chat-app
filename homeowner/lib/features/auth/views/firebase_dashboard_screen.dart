@@ -8,7 +8,7 @@ import '../../../core/theme/app_text_styles.dart';
 
 import '../../../core/theme/widgets/animated_theme_toggle.dart';
 
-import '../../settings/views/settings_screen.dart';
+import '../../chat/views/settings_screen.dart';
 
 class FirebaseDashboardScreen extends ConsumerWidget {
   const FirebaseDashboardScreen({super.key});

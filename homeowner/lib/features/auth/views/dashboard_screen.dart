@@ -7,7 +7,7 @@ import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../core/theme/widgets/theme_toggle.dart';
 import '../../../core/providers/theme_provider.dart';
-import '../../settings/views/settings_screen.dart';
+import '../../chat/views/settings_screen.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});

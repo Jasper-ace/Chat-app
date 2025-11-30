@@ -7,6 +7,7 @@ import '../../features/auth/viewmodels/firebase_auth_viewmodel.dart';
 import '../../features/chat/views/chat_list_screen.dart';
 import '../../features/chat/views/chat_screen.dart';
 import '../../features/chat/views/select_user_screen.dart';
+import '../../features/chat/views/settings_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(firebaseAuthViewModelProvider);
@@ -63,6 +64,10 @@ final routerProvider = Provider<GoRouter>((ref) {
             otherUserType: extra?['otherUserType'] ?? 'homeowner',
           );
         },
+      ),
+      GoRoute(
+        path: '/settings',
+        builder: (context, state) => const SettingsScreen(),
       ),
     ],
   );

@@ -19,6 +19,7 @@ class ChatApiService {
     required String receiverId,
     required String receiverType,
     required String message,
+    Map<String, dynamic>? replyTo,
   }) async {
     try {
       final token = await _getToken();
@@ -28,19 +29,26 @@ class ChatApiService {
 
       print('📤 Sending message: sender=$senderId, receiver=$receiverId');
 
+      final requestBody = {
+        'sender_id': int.tryParse(senderId) ?? 0,
+        'sender_type': senderType,
+        'receiver_id': int.tryParse(receiverId) ?? 0,
+        'receiver_type': receiverType,
+        'message': message,
+      };
+
+      // Add reply data if present
+      if (replyTo != null) {
+        requestBody['reply_to'] = replyTo;
+      }
+
       final response = await http.post(
         Uri.parse('$baseUrl/chats/send-message'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'sender_id': int.tryParse(senderId) ?? 0,
-          'sender_type': senderType,
-          'receiver_id': int.tryParse(receiverId) ?? 0,
-          'receiver_type': receiverType,
-          'message': message,
-        }),
+        body: jsonEncode(requestBody),
       );
 
       print('📤 Send message response: ${response.statusCode}');
