@@ -1,6 +1,5 @@
 import 'package:firebase_database/firebase_database.dart';
 import '../services/chat_api_service.dart';
-import '../../../core/services/auth_service.dart';
 
 /// Chat Repository using Firebase Realtime Database
 /// - Sends messages through Laravel API (Laravel writes to Firebase)

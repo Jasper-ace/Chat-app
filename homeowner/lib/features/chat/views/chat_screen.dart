@@ -43,6 +43,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Timer? _typingTimer;
   bool _isBlockedByMe = false; // I blocked the other user
   bool _isBlockedByThem = false; // They blocked me
+  bool _isOtherUserOnline = false; // Track other user's online status
 
   @override
   void initState() {
@@ -56,6 +57,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _currentUserId = (await _authService.getUserId())?.toString();
     print('🔥🔥🔥 Current user ID: $_currentUserId');
 
+    // Set my online status
+    _setOnlineStatus(true);
+
     // Check blocked status
     await _checkBlockedStatus();
 
@@ -63,12 +67,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (!widget.chatId.startsWith('new_')) {
       _listenToMessages();
       _listenToTypingStatus();
+      _listenToOnlineStatus();
     } else {
       // For new chats, just show empty state
       setState(() {
         _isLoading = false;
       });
     }
+  }
+
+  void _setOnlineStatus(bool isOnline) {
+    if (_currentUserId == null) return;
+
+    final onlineRef = FirebaseDatabase.instance.ref(
+      'userProfiles/$_currentUserId/online',
+    );
+
+    if (isOnline) {
+      onlineRef.set({'status': true, 'last_seen': ServerValue.timestamp});
+
+      // Set up disconnect handler
+      onlineRef.onDisconnect().set({
+        'status': false,
+        'last_seen': ServerValue.timestamp,
+      });
+    } else {
+      onlineRef.set({'status': false, 'last_seen': ServerValue.timestamp});
+    }
+  }
+
+  void _listenToOnlineStatus() {
+    final onlineRef = FirebaseDatabase.instance.ref(
+      'userProfiles/${widget.otherUserId}/online/status',
+    );
+
+    onlineRef.onValue.listen((event) {
+      if (mounted && event.snapshot.exists) {
+        final isOnline = event.snapshot.value as bool? ?? false;
+        setState(() {
+          _isOtherUserOnline = isOnline;
+        });
+      }
+    });
   }
 
   Future<void> _checkBlockedStatus() async {
@@ -161,7 +201,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 '🔥 Processing message key: $key, value type: ${value.runtimeType}',
               );
               if (value is Map) {
-                final message = Map<String, dynamic>.from(value as Map);
+                final message = Map<String, dynamic>.from(value);
                 message['id'] = key;
                 messages.add(message);
                 print(
@@ -169,6 +209,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 );
               }
             });
+
+            // Filter out messages deleted by current user
+            _filterDeletedMessages(messages);
           } else {
             print('🔥 No messages node found in thread data');
             print('🔥 Available keys: ${data.keys.toList()}');
@@ -372,6 +415,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           .ref('threads/$_actualChatId/typing/${_currentUserId}_homeowner')
           .set(false);
     }
+    // Set offline status
+    _setOnlineStatus(false);
     super.dispose();
   }
 
@@ -409,9 +454,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ),
                   ),
                   Text(
-                    'Offline',
+                    _isOtherUserOnline ? 'Online' : 'Offline',
                     style: AppTextStyles.bodySmall.copyWith(
-                      color: Colors.white70,
+                      color: _isOtherUserOnline ? Colors.green : Colors.white70,
                       fontSize: 12,
                     ),
                   ),
@@ -540,7 +585,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: const Icon(Icons.reply, color: Colors.grey),
             ),
             child: GestureDetector(
-              onLongPress: () => _showMessageOptions(message, isMe),
+              onLongPress: message['unsent'] == true
+                  ? null
+                  : () => _showMessageOptions(message, isMe),
               child: Container(
                 margin: const EdgeInsets.only(bottom: AppDimensions.spacing8),
                 padding: const EdgeInsets.symmetric(
@@ -569,7 +616,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     Text(
                       message['content']?.toString() ?? '',
                       style: AppTextStyles.bodyMedium.copyWith(
-                        color: isMe ? Colors.white : AppColors.onSurface,
+                        color: message['unsent'] == true
+                            ? (isMe ? Colors.white70 : Colors.grey)
+                            : (isMe ? Colors.white : AppColors.onSurface),
+                        fontStyle: message['unsent'] == true
+                            ? FontStyle.italic
+                            : FontStyle.normal,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -726,7 +778,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Delete Message'),
         content: const Text(
-          'Delete this message for you? This cannot be undone.',
+          'Delete this message for you? The other person will still see it.',
         ),
         actions: [
           TextButton(
@@ -734,12 +786,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // TODO: Implement delete from local view
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Message deleted')));
+              await _deleteMessageForMe(message);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
@@ -747,6 +796,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _deleteMessageForMe(Map<String, dynamic> message) async {
+    try {
+      if (_currentUserId == null) return;
+
+      final chatId = _actualChatId ?? widget.chatId;
+      final messageId = message['id'];
+
+      // Store deleted message ID in user's profile
+      final deletedRef = FirebaseDatabase.instance.ref(
+        'userProfiles/$_currentUserId/deletedMessages/$chatId/$messageId',
+      );
+
+      await deletedRef.set(true);
+
+      // Remove from local list
+      setState(() {
+        _messages.removeWhere((m) => m['id'] == messageId);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Message deleted for you')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete message: $e')));
+      }
+    }
   }
 
   void _handleCopy(Map<String, dynamic> message) {
@@ -767,7 +849,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Unsend Message'),
         content: const Text(
-          'Unsend this message? It will be removed for everyone and replaced with "Unsent message".',
+          'Unsend this message? It will be removed for everyone.',
         ),
         actions: [
           TextButton(
@@ -775,12 +857,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // TODO: Implement unsend functionality - update Firebase
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Message unsent')));
+              await _unsendMessage(message);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Unsend'),
@@ -788,6 +867,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _unsendMessage(Map<String, dynamic> message) async {
+    try {
+      final chatId = _actualChatId ?? widget.chatId;
+      final messageId = message['id'];
+
+      // Update message in Firebase to mark as unsent
+      final messageRef = FirebaseDatabase.instance.ref(
+        'threads/$chatId/messages/$messageId',
+      );
+
+      await messageRef.update({
+        'content': 'Message was unsent',
+        'unsent': true,
+        'unsent_at': DateTime.now().millisecondsSinceEpoch,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Message unsent')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to unsend message: $e')));
+      }
+    }
+  }
+
+  Future<void> _filterDeletedMessages(
+    List<Map<String, dynamic>> messages,
+  ) async {
+    if (_currentUserId == null) return;
+
+    final chatId = _actualChatId ?? widget.chatId;
+    final deletedRef = FirebaseDatabase.instance.ref(
+      'userProfiles/$_currentUserId/deletedMessages/$chatId',
+    );
+
+    final snapshot = await deletedRef.get();
+    if (snapshot.exists) {
+      final deletedIds = (snapshot.value as Map).keys.toSet();
+      messages.removeWhere((msg) => deletedIds.contains(msg['id']));
+    }
   }
 
   void _showChatOptions() {

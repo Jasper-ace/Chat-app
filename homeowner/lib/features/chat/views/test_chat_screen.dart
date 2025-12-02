@@ -68,7 +68,7 @@ class _TestChatScreenState extends State<TestChatScreen> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      value: _userType,
+                      initialValue: _userType,
                       decoration: const InputDecoration(
                         labelText: 'Your Type',
                         border: OutlineInputBorder(),
@@ -129,7 +129,7 @@ class _TestChatScreenState extends State<TestChatScreen> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
-                      value: _otherUserType,
+                      initialValue: _otherUserType,
                       decoration: const InputDecoration(
                         labelText: 'Other User Type',
                         border: OutlineInputBorder(),

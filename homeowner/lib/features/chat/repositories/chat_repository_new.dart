@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/chat_api_service.dart';
-import '../../../core/services/auth_service.dart';
 
 /// New Chat Repository
 /// - Sends messages through Laravel API (Laravel writes to Firestore)
