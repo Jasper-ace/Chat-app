@@ -12,7 +12,6 @@ class Tradie extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
-        'firebase_uid',
         'first_name',
         'last_name',
         'middle_name',
@@ -28,6 +27,7 @@ class Tradie extends Authenticatable
         'latitude',
         'longitude',
         'business_name',
+        'service_category_id',
         'license_number',
         'insurance_details',
         'years_experience',
@@ -140,7 +140,28 @@ class Tradie extends Authenticatable
         return $this->receivedReviews()->count();
     }
 
+    public function getFullNameAttribute()
+    {
+        return "{$this->first_name} {$this->last_name}";
+    }
+
+    public function getBusinessNameAttribute($value)
+    {
+        // If service_category_id exists, return the category name
+        if ($this->service_category_id && $this->serviceCategory) {
+            return $this->serviceCategory->name;
+        }
+        
+        // Otherwise return the stored business_name value
+        return $value;
+    }
+
     // Relationships
+    public function serviceCategory()
+    {
+        return $this->belongsTo(ServiceCategory::class, 'service_category_id');
+    }
+
     public function services()
     {
         return $this->belongsToMany(Service::class, 'tradie_services')
@@ -148,68 +169,38 @@ class Tradie extends Authenticatable
             ->withTimestamps();
     }
 
-    public function jobApplications()
-    {
-        return $this->hasMany(JobApplication::class);
-    }
+    // public function jobApplications()
+    // {
+    //     return $this->hasMany(JobApplication::class);
+    // }
 
     public function bookings()
     {
         return $this->hasMany(Booking::class);
     }
 
-    public function sentMessages()
-    {
-        return $this->hasMany(Message::class, 'sender_id');
-    }
+    // public function sentMessages()
+    // {
+    //     return $this->hasMany(Message::class, 'sender_id');
+    // }
 
-    public function receivedMessages()
-    {
-        return $this->hasMany(Message::class, 'receiver_id');
-    }
+    // public function receivedMessages()
+    // {
+    //     return $this->hasMany(Message::class, 'receiver_id');
+    // }
 
-    public function reviews()
-    {
-        return $this->hasMany(Review::class, 'reviewer_id');
-    }
+    // public function reviews()
+    // {
+    //     return $this->hasMany(Review::class, 'reviewer_id');
+    // }
 
-    public function receivedReviews()
-    {
-        return $this->hasMany(Review::class, 'reviewee_id');
-    }
+    // public function receivedReviews()
+    // {
+    //     return $this->hasMany(Review::class, 'reviewee_id');
+    // }
 
-    public function favoriteHomeowners()
-    {
-        return $this->belongsToMany(Homeowner::class, 'user_favorites', 'favorited_user_id', 'user_id');
-    }
-
-    // Chat relationships
-    public function chatsAsParticipant1()
-    {
-        return $this->hasMany(Chat::class, 'participant_1_id')->where('participant_1_type', 'tradie');
-    }
-
-    public function chatsAsParticipant2()
-    {
-        return $this->hasMany(Chat::class, 'participant_2_id')->where('participant_2_type', 'tradie');
-    }
-
-    public function allChats()
-    {
-        return Chat::where(function ($query) {
-            $query->where('participant_1_id', $this->id)->where('participant_1_type', 'tradie');
-        })->orWhere(function ($query) {
-            $query->where('participant_2_id', $this->id)->where('participant_2_type', 'tradie');
-        });
-    }
-
-    public function sentChatMessages()
-    {
-        return $this->hasMany(Message::class, 'sender_id')->where('sender_type', 'tradie');
-    }
-
-    public function receivedChatMessages()
-    {
-        return $this->hasMany(Message::class, 'receiver_id')->where('receiver_type', 'tradie');
-    }
+    // public function favoriteHomeowners()
+    // {
+    //     return $this->belongsToMany(Homeowner::class, 'user_favorites', 'favorited_user_id', 'user_id');
+    // }
 }

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Chat;
 use App\Models\Message;
-use App\Services\FirebaseService;
+use App\Services\FirebaseRealtimeDatabaseService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Validator;
@@ -13,11 +13,11 @@ use Illuminate\Support\Facades\Log;
 
 class ChatController extends Controller
 {
-    protected $firebaseService;
+    protected $firebaseRealtimeService;
 
-    public function __construct(FirebaseService $firebaseService)
+    public function __construct(FirebaseRealtimeDatabaseService $firebaseRealtimeService)
     {
-        $this->firebaseService = $firebaseService;
+        $this->firebaseRealtimeService = $firebaseRealtimeService;
     }
 
     /**
@@ -118,7 +118,7 @@ class ChatController extends Controller
     }
 
     /**
-     * Send a message (Laravel writes to Firestore, Flutter reads)
+     * Send a message (Laravel writes to Realtime Database, Flutter reads)
      */
     public function sendMessage(Request $request): JsonResponse
     {
@@ -143,9 +143,6 @@ class ChatController extends Controller
         }
 
         try {
-            // Use new Firestore service
-            $firestoreService = app(\App\Services\FirestoreChatService::class);
-            
             $messageData = [
                 'sender_id' => $request->sender_id,
                 'receiver_id' => $request->receiver_id,
@@ -159,14 +156,14 @@ class ChatController extends Controller
                 $messageData['reply_to'] = $request->reply_to;
             }
 
-            $result = $firestoreService->sendMessage($messageData);
+            $result = $this->firebaseRealtimeService->sendMessage($messageData);
 
             if ($result['success']) {
                 // Also save to MySQL for backup/analytics
                 try {
                     Message::create([
                         'firebase_thread_id' => $result['thread_id'] ?? null,
-                        'firebase_message_id' => isset($result['message_id']) ? 'msg_' . $result['message_id'] : null,
+                        'firebase_message_id' => $result['message_id'] ?? null,
                         'sender_id' => $request->sender_id,
                         'receiver_id' => $request->receiver_id,
                         'sender_type' => $request->sender_type,
@@ -400,9 +397,7 @@ class ChatController extends Controller
         }
 
         try {
-            $firestoreService = app(\App\Services\FirestoreChatService::class);
-            
-            $result = $firestoreService->createRoom([
+            $result = $this->firebaseRealtimeService->createRoom([
                 'tradie_id' => $request->tradie_id,
                 'homeowner_id' => $request->homeowner_id,
             ]);
@@ -447,9 +442,7 @@ class ChatController extends Controller
         }
 
         try {
-            $firestoreService = app(\App\Services\FirestoreChatService::class);
-            
-            $result = $firestoreService->blockUser(
+            $result = $this->firebaseRealtimeService->blockUser(
                 $request->blocker_id,
                 $request->blocked_id
             );
@@ -494,9 +487,7 @@ class ChatController extends Controller
         }
 
         try {
-            $firestoreService = app(\App\Services\FirestoreChatService::class);
-            
-            $result = $firestoreService->unblockUser(
+            $result = $this->firebaseRealtimeService->unblockUser(
                 $request->blocker_id,
                 $request->blocked_id
             );

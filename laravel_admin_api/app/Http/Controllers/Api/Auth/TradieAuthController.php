@@ -18,6 +18,7 @@ class TradieAuthController extends Controller
             'phone' => 'nullable|string|max:20',
             'password' => 'required|string|min:8|confirmed',
             'business_name' => 'nullable|string|max:255',
+            'service_category_id' => 'nullable|exists:service_categories,id',
             'license_number' => 'nullable|string|max:100',
             'years_experience' => 'nullable|integer|min:0|max:50',
             'hourly_rate' => 'nullable|numeric|min:0|max:999.99',
@@ -40,20 +41,19 @@ class TradieAuthController extends Controller
         }
 
         try {
-            // Split name into first, middle, last
-            $nameParts = explode(' ', trim($request->name));
-            $firstName = $nameParts[0] ?? '';
-            $lastName = count($nameParts) > 1 ? array_pop($nameParts) : '';
-            $middleName = count($nameParts) > 1 ? implode(' ', array_slice($nameParts, 1)) : '';
-            
+            // Split name into first_name and last_name
+            $nameParts = explode(' ', trim($request->name), 2);
+            $firstName = $nameParts[0];
+            $lastName = isset($nameParts[1]) ? $nameParts[1] : '';
+
             $tradie = Tradie::create([
                 'first_name' => $firstName,
-                'middle_name' => $middleName,
                 'last_name' => $lastName,
                 'email' => $request->email,
                 'phone' => $request->phone,
                 'password' => Hash::make($request->password),
                 'business_name' => $request->business_name,
+                'service_category_id' => $request->service_category_id,
                 'license_number' => $request->license_number,
                 'years_experience' => $request->years_experience,
                 'hourly_rate' => $request->hourly_rate,
@@ -68,34 +68,10 @@ class TradieAuthController extends Controller
 
             $token = $tradie->createToken('tradie-token')->plainTextToken;
 
-            // Build full name
-            $fullName = trim($tradie->first_name . ' ' . $tradie->middle_name . ' ' . $tradie->last_name);
-            
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'user' => [
-                        'id' => $tradie->id,
-                        'name' => $fullName,
-                        'first_name' => $tradie->first_name,
-                        'last_name' => $tradie->last_name,
-                        'middle_name' => $tradie->middle_name,
-                        'email' => $tradie->email,
-                        'phone' => $tradie->phone,
-                        'business_name' => $tradie->business_name,
-                        'license_number' => $tradie->license_number,
-                        'years_experience' => $tradie->years_experience,
-                        'hourly_rate' => $tradie->hourly_rate,
-                        'address' => $tradie->address,
-                        'city' => $tradie->city,
-                        'region' => $tradie->region,
-                        'postal_code' => $tradie->postal_code,
-                        'service_radius' => $tradie->service_radius,
-                        'availability_status' => $tradie->availability_status,
-                        'status' => $tradie->status,
-                        'is_verified' => $tradie->is_verified,
-                        'user_type' => 'tradie',
-                    ],
+                    'user' => $this->transformUserData($tradie),
                     'token' => $token,
                 ]
             ], 201);
@@ -155,36 +131,10 @@ class TradieAuthController extends Controller
 
         $token = $tradie->createToken('tradie-token')->plainTextToken;
 
-        // Build full name
-        $fullName = trim($tradie->first_name . ' ' . $tradie->middle_name . ' ' . $tradie->last_name);
-        
         return response()->json([
             'success' => true,
             'data' => [
-                'user' => [
-                    'id' => $tradie->id,
-                    'name' => $fullName,
-                    'first_name' => $tradie->first_name,
-                    'last_name' => $tradie->last_name,
-                    'middle_name' => $tradie->middle_name,
-                    'email' => $tradie->email,
-                    'phone' => $tradie->phone,
-                    'business_name' => $tradie->business_name,
-                    'license_number' => $tradie->license_number,
-                    'years_experience' => $tradie->years_experience,
-                    'hourly_rate' => $tradie->hourly_rate,
-                    'address' => $tradie->address,
-                    'city' => $tradie->city,
-                    'region' => $tradie->region,
-                    'postal_code' => $tradie->postal_code,
-                    'service_radius' => $tradie->service_radius,
-                    'availability_status' => $tradie->availability_status,
-                    'status' => $tradie->status,
-                    'is_verified' => $tradie->is_verified,
-                    //'average_rating' => $tradie->average_rating,
-                    //'total_reviews' => $tradie->total_reviews,
-                    'user_type' => 'tradie',
-                ],
+                'user' => $this->transformUserData($tradie),
                 'token' => $token,
             ]
         ]);
@@ -204,41 +154,64 @@ class TradieAuthController extends Controller
     {
         $tradie = $request->user();
 
-        // Build full name
-        $fullName = trim($tradie->first_name . ' ' . $tradie->middle_name . ' ' . $tradie->last_name);
-        
         return response()->json([
             'success' => true,
             'data' => [
-                'user' => [
-                    'id' => $tradie->id,
-                    'name' => $fullName,
-                    'email' => $tradie->email,
-                    'phone' => $tradie->phone,
-                    'avatar' => $tradie->avatar,
-                    'bio' => $tradie->bio,
-                    'business_name' => $tradie->business_name,
-                    'license_number' => $tradie->license_number,
-                    'insurance_details' => $tradie->insurance_details,
-                    'years_experience' => $tradie->years_experience,
-                    'hourly_rate' => $tradie->hourly_rate,
-                    'address' => $tradie->address,
-                    'city' => $tradie->city,
-                    'region' => $tradie->region,
-                    'postal_code' => $tradie->postal_code,
-                    'latitude' => $tradie->latitude,
-                    'longitude' => $tradie->longitude,
-                    'service_radius' => $tradie->service_radius,
-                    'availability_status' => $tradie->availability_status,
-                    'status' => $tradie->status,
-                    'is_verified' => $tradie->is_verified,
-                    'verified_at' => $tradie->verified_at,
-                    //'average_rating' => $tradie->average_rating,
-                    //'total_reviews' => $tradie->total_reviews,
-                    'user_type' => 'tradie',
-                    'created_at' => $tradie->created_at,
-                ]
+                'user' => $this->transformUserData($tradie)
             ]
         ]);
+    }
+
+    /**
+     * Get all tradies for chat functionality
+     */
+    public function getAllTradies()
+    {
+        try {
+            $tradies = Tradie::where('status', 'active')->get();
+            
+            $transformedTradies = $tradies->map(function ($tradie) {
+                return $this->transformUserData($tradie);
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedTradies
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => 'FETCH_ERROR',
+                    'message' => 'Failed to fetch tradies.',
+                ]
+            ], 500);
+        }
+    }
+
+    /**
+     * Transform user data to include name field for Flutter app compatibility
+     */
+    private function transformUserData($tradie)
+    {
+        // Load service category relationship if not already loaded
+        if (!$tradie->relationLoaded('serviceCategory')) {
+            $tradie->load('serviceCategory');
+        }
+        
+        $userData = $tradie->toArray();
+        
+        // Add the 'name' field that Flutter expects
+        $userData['name'] = trim($tradie->first_name . ' ' . $tradie->last_name);
+        
+        // Add user_type for consistency
+        $userData['user_type'] = 'tradie';
+        
+        // Always use service category name as business_name if service_category_id exists
+        if ($tradie->serviceCategory) {
+            $userData['business_name'] = $tradie->serviceCategory->name;
+        }
+        
+        return $userData;
     }
 }

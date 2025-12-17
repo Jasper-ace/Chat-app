@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../features/auth/views/firebase_login_screen.dart';
@@ -7,7 +8,10 @@ import '../../features/auth/viewmodels/firebase_auth_viewmodel.dart';
 import '../../features/chat/views/chat_list_screen.dart';
 import '../../features/chat/views/chat_screen.dart';
 import '../../features/chat/views/select_user_screen.dart';
-import '../../features/chat/views/settings_screen.dart';
+import '../../features/job_posting/views/job_post_form_screen.dart';
+import '../../features/job_posting/views/job_post_success_sccreen.dart';
+import '../../features/job_posting/views/job_list_screen.dart';
+import '../../features/job_posting/views/job_details_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(firebaseAuthViewModelProvider);
@@ -66,8 +70,30 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
-        path: '/settings',
-        builder: (context, state) => const SettingsScreen(),
+        path: '/post-job',
+        builder: (context, state) => const JobPostFormScreen(),
+      ),
+      GoRoute(
+        path: '/job-success',
+        builder: (context, state) => const JobPostSuccessScreen(),
+      ),
+      GoRoute(
+        path: '/my-jobs',
+        builder: (context, state) => const JobListScreen(),
+      ),
+      GoRoute(
+        path: '/jobs/:jobId',
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+
+          if (extra != null) {
+            return JobDetailsScreen(job: extra);
+          }
+
+          // If no extra data, navigate back to job list
+          Future.microtask(() => context.go('/my-jobs'));
+          return const SizedBox.shrink();
+        },
       ),
     ],
   );

@@ -24,16 +24,28 @@ class DioClient {
       InterceptorsWrapper(
         onRequest: (options, handler) async {
           final token = await _storage.read(key: 'access_token');
+          print('🔑 DioClient: Token check for ${options.path}');
+          print('🔑 Token exists: ${token != null}');
           if (token != null) {
+            print('🔑 Token preview: ${token.substring(0, 20)}...');
             options.headers[ApiConstants.authorization] =
                 '${ApiConstants.bearer} $token';
+            print(
+              '🔑 Authorization header set: ${ApiConstants.bearer} ${token.substring(0, 20)}...',
+            );
+          } else {
+            print('❌ No token found in storage');
           }
+          print('📤 Request headers: ${options.headers}');
           handler.next(options);
         },
         onError: (error, handler) async {
+          print('❌ DioClient Error: ${error.response?.statusCode}');
+          print('❌ Error data: ${error.response?.data}');
           if (error.response?.statusCode == 401) {
+            print('🔄 Clearing token due to 401 error');
             await _storage.delete(key: 'access_token');
-            // You can add navigation to login screen here
+            await _storage.delete(key: 'user_id');
           }
           handler.next(error);
         },
@@ -58,5 +70,23 @@ class DioClient {
 
   Future<String?> getToken() async {
     return await _storage.read(key: 'access_token');
+  }
+
+  Future<void> setUserId(int userId) async {
+    await _storage.write(key: 'user_id', value: userId.toString());
+  }
+
+  Future<void> clearUserId() async {
+    await _storage.delete(key: 'user_id');
+  }
+
+  Future<int?> getUserId() async {
+    final userIdString = await _storage.read(key: 'user_id');
+    return userIdString != null ? int.tryParse(userIdString) : null;
+  }
+
+  Future<void> clearAllData() async {
+    await _storage.delete(key: 'access_token');
+    await _storage.delete(key: 'user_id');
   }
 }

@@ -8,6 +8,8 @@ import '../../features/chat/views/chat_list_screen.dart';
 import '../../features/chat/views/chat_screen.dart';
 import '../../features/chat/views/select_user_screen.dart';
 import '../../features/chat/views/settings_screen.dart';
+import '../../features/job_posting/myJobs.dart';
+import '../../features/job_posting/view_details.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(firebaseAuthViewModelProvider);
@@ -68,6 +70,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/my-jobs',
+        builder: (context, state) => const MyJobsScreen(),
+      ),
+      GoRoute(
+        path: '/job-details',
+        builder: (context, state) {
+          final job = state.extra as Map<String, dynamic>;
+          return JobDetailsScreen(job: job);
+        },
       ),
     ],
   );

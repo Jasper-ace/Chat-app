@@ -1,9 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 /// Service to get current user's auto-increment ID
 class CurrentUserService {
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static final DatabaseReference _database = FirebaseDatabase.instance.ref();
   static final FirebaseAuth _auth = FirebaseAuth.instance;
 
   /// Get current user's auto-increment ID from database
@@ -12,26 +12,26 @@ class CurrentUserService {
       final currentUser = _auth.currentUser;
       if (currentUser == null) return null;
 
-      // Check homeowners collection first
-      final homeownerDoc = await _firestore
-          .collection('homeowners')
-          .doc(currentUser.uid)
+      // Check homeowners first
+      final homeownerSnapshot = await _database
+          .child('homeowners')
+          .child(currentUser.uid)
           .get();
 
-      if (homeownerDoc.exists) {
-        final data = homeownerDoc.data();
-        return data?['id'] as int?;
+      if (homeownerSnapshot.exists) {
+        final data = homeownerSnapshot.value as Map<dynamic, dynamic>?;
+        return data?['laravel_id'] as int?;
       }
 
-      // Check tradies collection
-      final tradieDoc = await _firestore
-          .collection('tradies')
-          .doc(currentUser.uid)
+      // Check tradies
+      final tradieSnapshot = await _database
+          .child('tradies')
+          .child(currentUser.uid)
           .get();
 
-      if (tradieDoc.exists) {
-        final data = tradieDoc.data();
-        return data?['id'] as int?;
+      if (tradieSnapshot.exists) {
+        final data = tradieSnapshot.value as Map<dynamic, dynamic>?;
+        return data?['laravel_id'] as int?;
       }
 
       return null;
@@ -47,23 +47,23 @@ class CurrentUserService {
       final currentUser = _auth.currentUser;
       if (currentUser == null) return null;
 
-      // Check homeowners collection first
-      final homeownerDoc = await _firestore
-          .collection('homeowners')
-          .doc(currentUser.uid)
+      // Check homeowners first
+      final homeownerSnapshot = await _database
+          .child('homeowners')
+          .child(currentUser.uid)
           .get();
 
-      if (homeownerDoc.exists) {
+      if (homeownerSnapshot.exists) {
         return 'homeowner';
       }
 
-      // Check tradies collection
-      final tradieDoc = await _firestore
-          .collection('tradies')
-          .doc(currentUser.uid)
+      // Check tradies
+      final tradieSnapshot = await _database
+          .child('tradies')
+          .child(currentUser.uid)
           .get();
 
-      if (tradieDoc.exists) {
+      if (tradieSnapshot.exists) {
         return 'tradie';
       }
 
@@ -80,30 +80,34 @@ class CurrentUserService {
       final currentUser = _auth.currentUser;
       if (currentUser == null) return null;
 
-      // Check homeowners collection first
-      final homeownerDoc = await _firestore
-          .collection('homeowners')
-          .doc(currentUser.uid)
+      // Check homeowners first
+      final homeownerSnapshot = await _database
+          .child('homeowners')
+          .child(currentUser.uid)
           .get();
 
-      if (homeownerDoc.exists) {
-        final data = homeownerDoc.data();
+      if (homeownerSnapshot.exists) {
+        final data = homeownerSnapshot.value as Map<dynamic, dynamic>;
         return {
-          ...data!,
+          ...Map<String, dynamic>.from(data),
           'userType': 'homeowner',
           'firebaseUid': currentUser.uid,
         };
       }
 
-      // Check tradies collection
-      final tradieDoc = await _firestore
-          .collection('tradies')
-          .doc(currentUser.uid)
+      // Check tradies
+      final tradieSnapshot = await _database
+          .child('tradies')
+          .child(currentUser.uid)
           .get();
 
-      if (tradieDoc.exists) {
-        final data = tradieDoc.data();
-        return {...data!, 'userType': 'tradie', 'firebaseUid': currentUser.uid};
+      if (tradieSnapshot.exists) {
+        final data = tradieSnapshot.value as Map<dynamic, dynamic>;
+        return {
+          ...Map<String, dynamic>.from(data),
+          'userType': 'tradie',
+          'firebaseUid': currentUser.uid,
+        };
       }
 
       return null;

@@ -6,10 +6,6 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
 
-import '../../../core/theme/widgets/animated_theme_toggle.dart';
-
-import '../../chat/views/settings_screen.dart';
-
 class FirebaseDashboardScreen extends ConsumerWidget {
   const FirebaseDashboardScreen({super.key});
 
@@ -23,8 +19,6 @@ class FirebaseDashboardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text('Dashboard', style: AppTextStyles.appBarTitle),
         actions: [
-          const AnimatedThemeToggle(),
-          const SizedBox(width: AppDimensions.spacing8),
           PopupMenuButton<String>(
             onSelected: (value) async {
               if (value == 'logout') {
@@ -130,30 +124,22 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                   ),
                   _buildActionCard(
                     context,
-                    icon: Icons.work,
-                    title: 'Find Tradies',
-                    subtitle: 'Search for services',
+                    icon: Icons.add_task,
+                    title: 'Post Job',
+                    subtitle: 'Create new job',
                     color: AppColors.tradieBlue,
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Find Tradies screen coming soon!'),
-                        ),
-                      );
+                      context.push('/post-job');
                     },
                   ),
                   _buildActionCard(
                     context,
-                    icon: Icons.history,
-                    title: 'My Bookings',
-                    subtitle: 'View booking history',
+                    icon: Icons.work_outline,
+                    title: 'My Job Posted',
+                    subtitle: 'View posted jobs',
                     color: AppColors.tradieGreen,
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Bookings screen coming soon!'),
-                        ),
-                      );
+                      context.push('/my-jobs');
                     },
                   ),
                   _buildActionCard(
@@ -170,22 +156,6 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                       );
                     },
                   ),
-                  _buildActionCard(
-                    context,
-                    icon: Icons.settings,
-                    title: 'Settings',
-                    subtitle: 'App preferences',
-                    color: AppColors.grey600,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const SettingsScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  const AnimatedThemeCard(),
                 ],
               ),
             ),
@@ -230,14 +200,20 @@ class FirebaseDashboardScreen extends ConsumerWidget {
                   fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: AppDimensions.spacing4),
-              Text(
-                subtitle,
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.onSurfaceVariant,
+              Flexible(
+                child: Text(
+                  subtitle,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                textAlign: TextAlign.center,
               ),
             ],
           ),

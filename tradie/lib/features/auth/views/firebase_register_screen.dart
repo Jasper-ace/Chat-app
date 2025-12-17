@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../viewmodels/firebase_auth_viewmodel.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_dimensions.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/constants/api_constants.dart';
 
 class FirebaseRegisterScreen extends ConsumerStatefulWidget {
   const FirebaseRegisterScreen({super.key});
@@ -17,37 +20,70 @@ class FirebaseRegisterScreen extends ConsumerStatefulWidget {
 class _FirebaseRegisterScreenState
     extends ConsumerState<FirebaseRegisterScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _middleNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
-  final _tradeTypeController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
 
-  final List<String> _tradeTypes = [
-    'Plumber',
-    'Electrician',
-    'Carpenter',
-    'Painter',
-    'Roofer',
-    'HVAC Technician',
-    'Landscaper',
-    'Handyman',
-    'Tiler',
-    'Flooring Specialist',
-    'Other',
-  ];
+  List<Map<String, dynamic>> _serviceCategories = [];
+  bool _isLoadingCategories = true;
+  int? _selectedCategoryId;
+  String? _selectedCategoryName;
 
-  String? _selectedTradeType;
+  @override
+  void initState() {
+    super.initState();
+    _loadServiceCategories();
+  }
+
+  Future<void> _loadServiceCategories() async {
+    try {
+      final dio = Dio();
+      final response = await dio.get(
+        '${ApiConstants.baseUrl}/jobs/categories',
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        final List<dynamic> categoriesData = data['data'] ?? data;
+
+        if (mounted) {
+          setState(() {
+            _serviceCategories = categoriesData
+                .map((cat) => {'id': cat['id'], 'name': cat['name']})
+                .toList();
+            _isLoadingCategories = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading categories: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingCategories = false;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _firstNameController.dispose();
+    _middleNameController.dispose();
+    _lastNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
-    _tradeTypeController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     super.dispose();
@@ -56,17 +92,27 @@ class _FirebaseRegisterScreenState
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final tradeType = _selectedTradeType == 'Other'
-        ? _tradeTypeController.text.trim()
-        : _selectedTradeType!;
+    if (_selectedCategoryId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a trade type')),
+      );
+      return;
+    }
+
+    // Combine first, middle, and last name
+    final fullName = [
+      _firstNameController.text.trim(),
+      _middleNameController.text.trim(),
+      _lastNameController.text.trim(),
+    ].where((part) => part.isNotEmpty).join(' ');
 
     final success = await ref
         .read(firebaseAuthViewModelProvider.notifier)
         .register(
           email: _emailController.text.trim(),
           password: _passwordController.text,
-          name: _nameController.text.trim(),
-          tradeType: tradeType,
+          name: fullName,
+          tradeType: _selectedCategoryName ?? '',
           phone: _phoneController.text.trim().isEmpty
               ? null
               : _phoneController.text.trim(),
@@ -94,17 +140,22 @@ class _FirebaseRegisterScreenState
                 const SizedBox(height: AppDimensions.spacing24),
 
                 // Logo/Title
+                const Icon(
+                  Icons.person_add,
+                  size: 80,
+                  color: AppColors.primary,
+                ),
+                const SizedBox(height: AppDimensions.spacing16),
                 Text(
-                  'Tradie Registration',
+                  'Create Account',
                   style: AppTextStyles.headlineLarge.copyWith(
-                    color: AppColors.primary,
                     fontWeight: FontWeight.bold,
                   ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: AppDimensions.spacing8),
                 Text(
-                  'Create your tradie account',
+                  'Join our tradie community',
                   style: AppTextStyles.bodyLarge.copyWith(
                     color: AppColors.onSurfaceVariant,
                   ),
@@ -112,16 +163,42 @@ class _FirebaseRegisterScreenState
                 ),
                 const SizedBox(height: AppDimensions.spacing32),
 
-                // Name field
+                // First Name field
                 TextFormField(
-                  controller: _nameController,
+                  controller: _firstNameController,
                   decoration: const InputDecoration(
-                    labelText: 'Full Name',
+                    labelText: 'First Name *',
                     prefixIcon: Icon(Icons.person),
                   ),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
-                      return 'Please enter your full name';
+                      return 'Please enter your first name';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: AppDimensions.spacing16),
+
+                // Middle Name field
+                TextFormField(
+                  controller: _middleNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Middle Name',
+                    prefixIcon: Icon(Icons.person),
+                  ),
+                ),
+                const SizedBox(height: AppDimensions.spacing16),
+
+                // Last Name field
+                TextFormField(
+                  controller: _lastNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Last Name *',
+                    prefixIcon: Icon(Icons.person),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please enter your last name';
                     }
                     return null;
                   },
@@ -133,7 +210,7 @@ class _FirebaseRegisterScreenState
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
                   decoration: const InputDecoration(
-                    labelText: 'Email',
+                    labelText: 'Email *',
                     prefixIcon: Icon(Icons.email),
                   ),
                   validator: (value) {
@@ -150,65 +227,61 @@ class _FirebaseRegisterScreenState
                 ),
                 const SizedBox(height: AppDimensions.spacing16),
 
-                // Phone field (optional)
+                // Phone field
                 TextFormField(
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
                   decoration: const InputDecoration(
-                    labelText: 'Phone (Optional)',
+                    labelText: 'Phone',
                     prefixIcon: Icon(Icons.phone),
                   ),
                 ),
                 const SizedBox(height: AppDimensions.spacing16),
 
-                // Trade Type dropdown
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedTradeType,
-                  decoration: const InputDecoration(
-                    labelText: 'Trade Type',
-                    prefixIcon: Icon(Icons.work),
-                  ),
-                  items: _tradeTypes.map((String tradeType) {
-                    return DropdownMenuItem<String>(
-                      value: tradeType,
-                      child: Text(tradeType),
-                    );
-                  }).toList(),
-                  onChanged: (String? newValue) {
-                    setState(() {
-                      _selectedTradeType = newValue;
-                    });
-                  },
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please select your trade type';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: AppDimensions.spacing16),
-
-                // Custom trade type field (if "Other" is selected)
-                if (_selectedTradeType == 'Other')
-                  Column(
-                    children: [
-                      TextFormField(
-                        controller: _tradeTypeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Specify Trade Type',
-                          prefixIcon: Icon(Icons.edit),
+                // Trade Type dropdown (Service Categories)
+                _isLoadingCategories
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(),
                         ),
+                      )
+                    : DropdownButtonFormField<int>(
+                        value: _selectedCategoryId,
+                        decoration: const InputDecoration(
+                          labelText: 'Trade Type *',
+                          hintText: 'e.g., Plumber, Electrician, Carpenter',
+                          prefixIcon: Icon(Icons.build),
+                        ),
+                        hint: const Text(
+                          'e.g., Plumber, Electrician, Carpenter',
+                        ),
+                        isExpanded: true,
+                        items: _serviceCategories.map((category) {
+                          return DropdownMenuItem<int>(
+                            value: category['id'],
+                            child: Text(category['name']),
+                          );
+                        }).toList(),
+                        onChanged: (int? newValue) {
+                          setState(() {
+                            _selectedCategoryId = newValue;
+                            // Find and store the category name
+                            final category = _serviceCategories.firstWhere(
+                              (cat) => cat['id'] == newValue,
+                              orElse: () => {'name': ''},
+                            );
+                            _selectedCategoryName = category['name'];
+                          });
+                        },
                         validator: (value) {
-                          if (_selectedTradeType == 'Other' &&
-                              (value == null || value.trim().isEmpty)) {
-                            return 'Please specify your trade type';
+                          if (value == null) {
+                            return 'Please select your trade type';
                           }
                           return null;
                         },
                       ),
-                      const SizedBox(height: AppDimensions.spacing16),
-                    ],
-                  ),
+                const SizedBox(height: AppDimensions.spacing16),
 
                 // Password field
                 TextFormField(
@@ -282,12 +355,12 @@ class _FirebaseRegisterScreenState
                       bottom: AppDimensions.spacing16,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.error.withOpacity(0.1),
+                      color: AppColors.error.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(
                         AppDimensions.radiusMedium,
                       ),
                       border: Border.all(
-                        color: AppColors.error.withOpacity(0.3),
+                        color: AppColors.error.withValues(alpha: 0.3),
                       ),
                     ),
                     child: Text(

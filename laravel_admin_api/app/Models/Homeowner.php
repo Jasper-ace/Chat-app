@@ -11,6 +11,8 @@ class Homeowner extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
+    // ─── Fillable ────────────────────────────────────────────────
+    // These are the attributes you can mass assign (e.g., Homeowner::create()).
     protected $fillable = [
         'first_name',
         'last_name',
@@ -29,11 +31,15 @@ class Homeowner extends Authenticatable
         'status',
     ];
 
+    // ─── Hidden ─────────────────────────────────────────────────
+    // These attributes will not be visible when the model is converted to arrays or JSON.
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
+    // ─── Casts ──────────────────────────────────────────────────
+    // These define how certain attributes are automatically converted.
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
@@ -41,17 +47,33 @@ class Homeowner extends Authenticatable
         'longitude' => 'decimal:8',
     ];
 
-    // Scopes
+    // ─── Boot Method ────────────────────────────────────────────
+    // Automatically sets default status to 'active' when a new homeowner is created.
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($homeowner) {
+            if (empty($homeowner->status)) {
+                $homeowner->status = 'active';
+            }
+        });
+    }
+
+    // ─── Scopes ────────────────────────────────────────────────
+    // Allow cleaner queries such as Homeowner::active()->get();
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
     }
 
+    // Filter homeowners by region.
     public function scopeInRegion($query, $region)
     {
         return $query->where('region', $region);
     }
 
+    // Find nearby homeowners based on coordinates (latitude and longitude).
     public function scopeNearLocation($query, $latitude, $longitude, $radiusKm = 50)
     {
         return $query->selectRaw("
@@ -67,7 +89,8 @@ class Homeowner extends Authenticatable
         ->orderBy('distance');
     }
 
-    // Accessors
+    // ─── Accessors ────────────────────────────────────────────────
+    // Combines address components into one readable string.
     public function getFullAddressAttribute()
     {
         return collect([$this->address, $this->city, $this->region, $this->postal_code])
@@ -75,69 +98,28 @@ class Homeowner extends Authenticatable
             ->implode(', ');
     }
 
-    // Relationships
-    public function jobs()
+    public function getFullNameAttribute()
     {
-        return $this->hasMany(Job::class);
+        return "{$this->first_name} {$this->last_name}";
     }
 
-    public function bookings()
+    
+    public function jobOffers()
     {
-        return $this->hasMany(Booking::class);
+        return $this->hasMany(HomeownerJobOffer::class);
     }
 
-    public function sentMessages()
-    {
-        return $this->hasMany(Message::class, 'sender_id');
-    }
+    // ─── Relationships (commented out as requested) ───────────────
+    // These are kept here for later use but are currently disabled.
 
-    public function receivedMessages()
-    {
-        return $this->hasMany(Message::class, 'receiver_id');
-    }
+    // public function bookings()
+    // {
+    //     return $this->hasMany(Booking::class);
+    // }
 
-    public function reviews()
-    {
-        return $this->hasMany(Review::class, 'reviewer_id');
-    }
+    // public function favoriteTradies()
+    // {
+    //     return $this->belongsToMany(Tradie::class, 'user_favorites', 'user_id', 'favorited_user_id');
+    // }
 
-    public function receivedReviews()
-    {
-        return $this->hasMany(Review::class, 'reviewee_id');
-    }
-
-    public function favoriteTradies()
-    {
-        return $this->belongsToMany(Tradie::class, 'user_favorites', 'user_id', 'favorited_user_id');
-    }
-
-    // Chat relationships
-    public function chatsAsParticipant1()
-    {
-        return $this->hasMany(Chat::class, 'participant_1_id')->where('participant_1_type', 'homeowner');
-    }
-
-    public function chatsAsParticipant2()
-    {
-        return $this->hasMany(Chat::class, 'participant_2_id')->where('participant_2_type', 'homeowner');
-    }
-
-    public function allChats()
-    {
-        return Chat::where(function ($query) {
-            $query->where('participant_1_id', $this->id)->where('participant_1_type', 'homeowner');
-        })->orWhere(function ($query) {
-            $query->where('participant_2_id', $this->id)->where('participant_2_type', 'homeowner');
-        });
-    }
-
-    public function sentChatMessages()
-    {
-        return $this->hasMany(Message::class, 'sender_id')->where('sender_type', 'homeowner');
-    }
-
-    public function receivedChatMessages()
-    {
-        return $this->hasMany(Message::class, 'receiver_id')->where('receiver_type', 'homeowner');
-    }
 }

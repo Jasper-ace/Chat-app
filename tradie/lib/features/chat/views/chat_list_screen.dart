@@ -184,6 +184,16 @@ class _ChatListScreenState extends ConsumerState<ChatListScreen>
       appBar: AppBar(
         backgroundColor: AppColors.primary,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/dashboard');
+            }
+          },
+        ),
         title: Text(
           'Messages',
           style: AppTextStyles.appBarTitle.copyWith(color: Colors.white),

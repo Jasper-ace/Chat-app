@@ -5,6 +5,13 @@ class ApiConstants {
   static const String logoutEndpoint = '/homeowner/logout';
   static const String refreshTokenEndpoint = '/tradie/refresh';
 
+  // Job posting endpoints
+  static const String categoriesEndpoint = '/jobs/categories';
+  static const String jobOffersEndpoint = '/jobs/job-offers';
+
+  // Storage
+  static const String storageBaseUrl = 'http://10.0.2.2:8000/storage';
+
   // Headers
   static const String contentType = 'application/json';
   static const String accept = 'application/json';

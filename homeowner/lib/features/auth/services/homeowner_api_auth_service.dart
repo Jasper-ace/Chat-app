@@ -36,16 +36,21 @@ class HomeownerApiAuthService {
 
       if (response.statusCode == 201) {
         final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          // Save token
-          final token = data['data']['token'];
+
+        // Laravel returns: {access_token, token_type, expires_in, user}
+        if (data['access_token'] != null) {
+          final token = data['access_token'];
+          final user = data['user'];
+
+          // Save token and user data
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('auth_token', token);
           await prefs.setString('user_type', 'homeowner');
-          await prefs.setInt('user_id', data['data']['user']['id']);
+          await prefs.setInt('user_id', user['id']);
 
-          print('✅ Registration successful!');
-          return data['data'];
+          print('✅ Registration successful! User ID: ${user['id']}');
+
+          return {'token': token, 'user': user};
         }
       } else if (response.statusCode == 422) {
         // Validation error
@@ -79,30 +84,56 @@ class HomeownerApiAuthService {
     required String password,
   }) async {
     try {
+      print('🔵 Attempting login to: $baseUrl/homeowner/login');
+      print('📧 Email: $email');
+
       final response = await http.post(
         Uri.parse('$baseUrl/homeowner/login'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
         body: jsonEncode({'email': email, 'password': password}),
       );
 
+      print('📡 Response status: ${response.statusCode}');
+      print('📄 Response body: ${response.body}');
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          // Save token
-          final token = data['data']['token'];
+
+        // Laravel returns: {access_token, token_type, expires_in, user}
+        if (data['access_token'] != null) {
+          final token = data['access_token'];
+          final user = data['user'];
+
+          // Save token and user data
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('auth_token', token);
           await prefs.setString('user_type', 'homeowner');
-          await prefs.setInt('user_id', data['data']['user']['id']);
+          await prefs.setInt('user_id', user['id']);
 
-          return data['data'];
+          print('✅ Login successful! User ID: ${user['id']}');
+
+          return {'token': token, 'user': user};
         }
+      } else if (response.statusCode == 401) {
+        print('❌ Invalid credentials');
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['error']['message'] ?? 'Invalid credentials');
+      } else if (response.statusCode == 422) {
+        print('❌ Validation error');
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['error']['message'] ?? 'Validation failed');
+      } else {
+        print('❌ Login failed with status: ${response.statusCode}');
+        throw Exception('Login failed');
       }
 
       return null;
     } catch (e) {
-      print('Sign in error: $e');
-      return null;
+      print('❌ Sign in error: $e');
+      rethrow;
     }
   }
 
@@ -118,14 +149,16 @@ class HomeownerApiAuthService {
         Uri.parse('$baseUrl/homeowner/me'),
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
           'Authorization': 'Bearer $token',
         },
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          return data['data']['user'];
+        // Laravel returns: {success: true, data: {...}}
+        if (data['success'] == true && data['data'] != null) {
+          return data['data'];
         }
       }
 

@@ -19,14 +19,32 @@ class DatabaseSeeder extends Seeder
     {
         // User::factory(10)->create();
 
+        // Seed admin user
         User::factory()->create([
-            'name' => 'Fixo Admin',
-            'email' => 'admin@gmail.com',
+            'first_name' => 'Eizler ',
+            'last_name' => 'Martin',   
+            'middle_name' => 'Est',
+            'email' => 'eizlerdylan.martin@lorma.edu',
             'password' => Hash::make("admin"),
+            'role' => 'admin',
+            'status' => 'active',
         ]);
 
-        Homeowner::factory(10)->create();
+        Homeowner::factory()->create([
+            'first_name' => 'John',
+            'last_name' => 'Doe',
+            'email' => 'homeowner1@gmail.com',
+            'password' => Hash::make("password"),
+        ]);
 
+        User::factory(10)->create();
+        // Seed other users
+        Homeowner::factory(20)->create();
         Tradie::factory(10)->create();
+
+        $this->call([
+            ServiceSeeder::class,
+            HomeownerJobOfferSeeder::class,
+        ]);
     }
 }

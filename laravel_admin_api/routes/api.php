@@ -2,9 +2,9 @@
 
 use App\Http\Controllers\Api\Auth\HomeownerAuthController;
 use App\Http\Controllers\Api\Auth\TradieAuthController;
-use App\Http\Controllers\Api\FirebaseController;
-use App\Http\Controllers\Api\HomeownerController;
-use App\Http\Controllers\Api\TradieController;
+use App\Http\Controllers\Api\Auth\UserAuthController;
+use App\Http\Controllers\Api\ServiceController;
+use App\Http\Controllers\Api\JobOfferController;
 use App\Http\Controllers\Api\ChatController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -31,6 +31,11 @@ Route::prefix('homeowner')->group(function () {
     });
 });
 
+Route::prefix('user')->group(function () {
+    Route::post('login', [UserAuthController::class, 'login']);
+    
+});
+
 // Tradie Authentication Routes
 Route::prefix('tradie')->group(function () {
     Route::post('register', [TradieAuthController::class, 'register']);
@@ -42,71 +47,59 @@ Route::prefix('tradie')->group(function () {
     });
 });
 
-// Firebase Integration Routes
-Route::prefix('firebase')->group(function () {
-    Route::post('sync-homeowner', [FirebaseController::class, 'syncHomeowner']);
-    Route::post('sync-tradie', [FirebaseController::class, 'syncTradie']);
-    Route::post('verify-token', [FirebaseController::class, 'verifyToken']);
-    Route::get('user/{firebase_uid}', [FirebaseController::class, 'getUserByFirebaseUid']);
-});
-
-// Homeowner API Routes
-Route::prefix('homeowners')->group(function () {
-    Route::get('/', [HomeownerController::class, 'index']);
-    Route::post('/', [HomeownerController::class, 'store']);
-    Route::get('{id}', [HomeownerController::class, 'show']);
-    Route::put('{id}', [HomeownerController::class, 'update']);
-    Route::delete('{id}', [HomeownerController::class, 'destroy']);
-    Route::get('firebase/{firebase_uid}', [HomeownerController::class, 'getByFirebaseUid']);
-});
-
-// Tradie API Routes
-Route::prefix('tradies')->group(function () {
-    Route::get('/', [TradieController::class, 'index']);
-    Route::post('/', [TradieController::class, 'store']);
-    Route::get('{id}', [TradieController::class, 'show']);
-    Route::put('{id}', [TradieController::class, 'update']);
-    Route::delete('{id}', [TradieController::class, 'destroy']);
-    Route::get('firebase/{firebase_uid}', [TradieController::class, 'getByFirebaseUid']);
-    Route::post('search', [TradieController::class, 'search']);
-});
-
-// Chat API Routes (Laravel controls Firestore writes)
-Route::prefix('chats')->group(function () {
-    Route::get('user-chats', [ChatController::class, 'getUserChats']);
-    Route::get('{chat_id}/messages', [ChatController::class, 'getChatMessages']);
-    Route::post('send-message', [ChatController::class, 'sendMessage']); // Laravel writes to Firestore
-    Route::post('create-room', [ChatController::class, 'createRoom']); // Create chat room
-    Route::post('block-user', [ChatController::class, 'blockUser']); // Block user
-    Route::post('unblock-user', [ChatController::class, 'unblockUser']); // Unblock user
-    Route::post('mark-as-read', [ChatController::class, 'markAsRead']);
-    Route::get('stats', [ChatController::class, 'getChatStats']);
-    Route::post('search-messages', [ChatController::class, 'searchMessages']);
-    Route::post('sync-firebase', [ChatController::class, 'syncFirebaseMessages']);
-});
-
-// Test routes
-Route::get('test', [App\Http\Controllers\Api\TestController::class, 'test']);
-Route::get('test-database', [App\Http\Controllers\Api\TestController::class, 'testDatabase']);
-Route::post('test-create-homeowner', [App\Http\Controllers\Api\TestController::class, 'testCreateHomeowner']);
-
-// Direct save routes (no Firebase dependency)
-Route::post('direct-save-homeowner', [App\Http\Controllers\Api\DirectSaveController::class, 'saveHomeowner']);
-Route::post('direct-save-tradie', [App\Http\Controllers\Api\DirectSaveController::class, 'saveTradie']);
-Route::get('get-homeowners', [App\Http\Controllers\Api\DirectSaveController::class, 'getHomeowners']);
-
-// Simple homeowner creation without Firebase dependency
-Route::post('homeowners-simple', [App\Http\Controllers\Api\TestController::class, 'testCreateHomeowner']);
-
 // Protected routes for authenticated users
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
+    
+    // Get all tradies for chat
+    Route::get('/tradies', [TradieAuthController::class, 'getAllTradies']);
+    
+    // Get all homeowners for chat
+    Route::get('/homeowners', [HomeownerAuthController::class, 'getAllHomeowners']);
 });
 
-// Chat Sync API - save Firebase messages to MySQL
-Route::prefix('chat-sync')->group(function () {
-    Route::post('from-firebase', [ChatController::class, 'storeFirebaseMessagesToMySQL']);
-    Route::post('to-firebase', [ChatController::class, 'pushMessagesToFirebase']);
+// Chat Routes
+Route::prefix('chats')->middleware('auth:sanctum')->group(function () {
+    Route::post('/send-message', [ChatController::class, 'sendMessage']);
+    Route::post('/create-room', [ChatController::class, 'createRoom']);
+    Route::get('/user-chats', [ChatController::class, 'getUserChats']);
+    Route::get('/{chatId}/messages', [ChatController::class, 'getChatMessages']);
+    Route::post('/mark-as-read', [ChatController::class, 'markAsRead']);
+    Route::get('/stats', [ChatController::class, 'getChatStats']);
+    Route::post('/search', [ChatController::class, 'searchMessages']);
+    Route::post('/sync-firebase', [ChatController::class, 'syncFirebaseMessages']);
+    Route::post('/block-user', [ChatController::class, 'blockUser']);
+    Route::post('/unblock-user', [ChatController::class, 'unblockUser']);
+});
+
+// Public Job and Service Routes (POSTMAN)
+Route::prefix('jobs')->group(function () {
+    Route::get('/categories', [ServiceController::class, 'index']);
+    Route::get('/categories/{id}', [ServiceController::class, 'indexSpecificCategory']);
+    Route::get('/categories/{id}/services', [ServiceController::class, 'indexSpecificCategoryServices']);
+    Route::get('/services', [ServiceController::class, 'indexService']);
+    Route::get('/services/{id}', [ServiceController::class, 'indexSpecificService']);
+});
+
+
+// Homeowner & Tradie Jobs
+Route::prefix('jobs')->middleware('auth:sanctum')->group(function () {
+    // Homeowner routes
+    Route::get('/job-offers', [JobOfferController::class, 'index']);
+    Route::post('/job-offers', [JobOfferController::class, 'store']);
+    Route::get('/job-offers/{id}', [JobOfferController::class, 'show']);
+    Route::put('/job-offers/{id}', [JobOfferController::class, 'update']);
+    Route::delete('/job-offers/{id}', [JobOfferController::class, 'destroy']);
+    
+    // Tradie routes
+    Route::get('/available', [JobOfferController::class, 'getAvailableJobsForTradie']);
+    Route::post('/{jobId}/apply', [JobOfferController::class, 'applyForJob']);
+    
+    // Get applications for a job (homeowner only)
+    Route::get('/{jobId}/applications', [JobOfferController::class, 'getJobApplications']);
+    
+    // Update application status (accept/reject)
+    Route::put('/{jobId}/applications/{applicationId}', [JobOfferController::class, 'updateApplicationStatus']);
 });
